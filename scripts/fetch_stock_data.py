@@ -1,12 +1,12 @@
 """
 行情采集脚本:AKShare 获取个股日线数据并入库(StockPrice 表)
 
-特性:
-- 使用 akshare.stock_zh_a_hist 接口,默认抓取近 3 个月日线(前复权,保证技术指标连续)
-- tenacity 重试机制(失败自动重试 3 次)
-- 入库前清洗:去空值、类型规整(价格 Float、成交量 Integer、日期 Date)
-- 幂等:同一股票同一日期已有记录则跳过,可重复运行不产生重复行
-- SQLAlchemy Session + bulk_save_objects 批量提交
+核心:多级降级策略(自主制作)+ AI Coding 实现
+- Level-1 主数据源:AKShare(东财通道),失败后指数退避重试 3 次
+- Level-2 备用数据源:新浪财经(akshare stock_zh_a_daily 通道)
+- Level-3 最终兜底:本地 Mock 数据生成器,保障系统不崩溃
+- DATA_SOURCE 标记真实数据来源(real/backup/mock),供下游(报告生成)判断
+- 入库幂等:同一股票同一日期已有记录则跳过,可重复运行
 
 直接运行: python scripts/fetch_stock_data.py
 """
@@ -16,93 +16,45 @@ import time
 from datetime import date, timedelta
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
-from tenacity import retry, stop_after_attempt, wait_fixed
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import akshare as ak  # noqa: E402
 from backend.models import StockPrice  # noqa: E402
 from backend.models import engine  # noqa: E402
-from sqlalchemy.orm import sessionmaker  # noqa: E402
+from sqlalchemy.orm import Session, sessionmaker  # noqa: E402
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# 配置结构化日志
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 SessionLocal = sessionmaker(bind=engine)
 
-# 【待接入:异常降级策略(自主制作)】
-# 若 AKShare 重试 3 次仍失败,你想切备用接口还是返回 Mock 数据?
-# 在 _fallback_after_failure() 中实现你的策略,由 fetch_stock_data() 自动调用
-FALLBACK_ENABLED = False
+# 多级降级策略:定义数据来源标记,方便下游判断是真实数据还是 Mock 数据
+DATA_SOURCE = "real"  # real, backup, mock
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-def _fetch_from_akshare(symbol: str, start: str, end: str) -> pd.DataFrame:
-    """调用 AKShare 日线接口(带自动重试)。日期格式:YYYYMMDD"""
-    logger.info("调用 akshare.stock_zh_a_hist(symbol=%s, %s ~ %s)", symbol, start, end)
-    return ak.stock_zh_a_hist(symbol=symbol, period="daily", start_date=start, end_date=end, adjust="qfq")
+def _save_to_db(df: pd.DataFrame, session: Session | None = None) -> int:
+    """清洗数据并批量存入数据库(幂等:已存在的 (stock_code, date) 自动跳过)"""
+    if df.empty:
+        return 0
+    stock_code = str(df["stock_code"].iloc[0])
 
-
-def _fallback_after_failure(symbol: str, start: str, end: str) -> pd.DataFrame:
-    """【待接入】AKShare 完全失败后的降级:备用数据源或 Mock 数据"""
-    logger.warning("AKShare 获取失败,当前降级策略未启用(FALLBACK_ENABLED=False)")
-    return pd.DataFrame()
-
-
-def _clean(df: pd.DataFrame) -> pd.DataFrame:
-    """清洗行情数据:映射中文列名、去空值、规整类型"""
-    df = df.rename(columns={
-        "日期": "date",
-        "开盘": "open_price",
-        "收盘": "close_price",
-        "最高": "high_price",
-        "最低": "low_price",
-        "成交量": "volume",
-    })
-    df = df[["date", "open_price", "close_price", "high_price", "low_price", "volume"]]
-    # 停牌等原因可能出现空值,直接剔除该行
-    df = df.dropna(subset=["open_price", "close_price", "high_price", "low_price", "volume"])
+    # 清洗:只取表字段、去空值、规整类型
+    cols = ["date", "open_price", "close_price", "high_price", "low_price", "volume"]
+    df = df[cols].dropna()
     df["date"] = pd.to_datetime(df["date"]).dt.date
-    df["volume"] = df["volume"].astype(int)
     df["open_price"] = df["open_price"].astype(float)
     df["close_price"] = df["close_price"].astype(float)
     df["high_price"] = df["high_price"].astype(float)
     df["low_price"] = df["low_price"].astype(float)
-    return df
+    df["volume"] = df["volume"].astype(int)
 
-
-def fetch_stock_data(symbol: str = "600519", days: int = 90) -> int:
-    """
-    抓取某只股票近 N 天日线并批量入库,返回实际插入条数。
-    :param symbol: 股票代码,默认 600519(贵州茅台)
-    :param days:   回看天数,默认 90(近 3 个月)
-    """
-    start_time = time.perf_counter()
-    end = date.today()
-    start = end - timedelta(days=days)
-    logger.info("开始抓取 %s 行情: %s ~ %s", symbol, start, end)
-
-    # 1. 抓取(带重试;失败走降级策略)
-    try:
-        raw = _fetch_from_akshare(symbol, start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
-    except Exception as e:
-        logger.error("AKShare 重试 3 次后仍失败: %s", e)
-        if FALLBACK_ENABLED:
-            raw = _fallback_after_failure(symbol, start.strftime("%Y%m%d"), end.strftime("%Y%m%d"))
-        else:
-            raise
-    if raw.empty:
-        logger.warning("未获取到任何数据")
-        return 0
-    logger.info("抓取成功 %d 条原始记录", len(raw))
-
-    # 2. 清洗并构造 ORM 对象
-    clean = _clean(raw)
-    logger.info("清洗后 %d 条有效记录", len(clean))
     objects = [
         StockPrice(
-            stock_code=symbol,
+            stock_code=stock_code,
             date=row.date,
             open_price=row.open_price,
             close_price=row.close_price,
@@ -110,33 +62,136 @@ def fetch_stock_data(symbol: str = "600519", days: int = 90) -> int:
             low_price=row.low_price,
             volume=row.volume,
         )
-        for row in clean.itertuples(index=False)
+        for row in df.itertuples(index=False)
     ]
 
-    # 3. 幂等去重:库中已存在的 (stock_code, date) 不再插入
+    # 幂等去重:库中已有的日期不再插入
     dates = [obj.date for obj in objects]
-    with SessionLocal() as session:
+    with SessionLocal() as s:
         existing = {
-            d for (d,) in session.query(StockPrice.date)
-            .filter(StockPrice.stock_code == symbol, StockPrice.date.in_(dates))
+            d for (d,) in s.query(StockPrice.date)
+            .filter(StockPrice.stock_code == stock_code, StockPrice.date.in_(dates))
             .all()
         }
     fresh = [obj for obj in objects if obj.date not in existing]
-    skipped = len(objects) - len(fresh)
-    if skipped:
-        logger.info("跳过已存在的 %d 条重复记录", skipped)
 
-    # 4. 批量入库
+    # 批量入库(bulk_save_objects 高性能提交)
     if fresh:
-        with SessionLocal() as session:
+        if session is not None:
             session.bulk_save_objects(fresh)
             session.commit()
-        logger.info("插入 %d 条行情记录", len(fresh))
-
-    elapsed = time.perf_counter() - start_time
-    logger.info("fetch_stock_data 完成: 抓取 %d 条, 插入 %d 条, 跳过 %d 条, 耗时 %.2f 秒",
-                len(raw), len(fresh), skipped, elapsed)
+        else:
+            with SessionLocal() as s:
+                s.bulk_save_objects(fresh)
+                s.commit()
+        logger.info("入库 %d 条行情记录(跳过 %d 条重复)", len(fresh), len(objects) - len(fresh))
     return len(fresh)
+
+
+def _fetch_from_akshare(stock_code: str, days: int) -> pd.DataFrame:
+    """Level-1 主数据源:AKShare(东财通道),近 N 天日线"""
+    logger.info("尝试 [Level-1] 主数据源 AKShare 拉取 %s...", stock_code)
+    end = date.today()
+    start = end - timedelta(days=days)
+    df = ak.stock_zh_a_hist(symbol=stock_code, period="daily",
+                            start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+                            adjust="qfq")
+    if df is None or df.empty:
+        raise ValueError("AKShare 返回数据为空")
+    # 重命名列以匹配数据库
+    df = df.rename(columns={"日期": "date", "开盘": "open_price", "收盘": "close_price",
+                            "最高": "high_price", "最低": "low_price", "成交量": "volume"})
+    df["stock_code"] = stock_code
+    return df
+
+
+def _fetch_from_backup(stock_code: str, days: int) -> pd.DataFrame:
+    """Level-2 备用数据源:新浪财经(akshare 新浪通道)"""
+    logger.warning("触发 [Level-2] 降级:尝试备用接口(新浪财经)...")
+    end = date.today()
+    start = end - timedelta(days=days)
+    # 新浪接口需要市场前缀:6 开头为上交所(sh),其余按深交所(sz)
+    prefix = "sh" if stock_code.startswith("6") else "sz"
+    df = ak.stock_zh_a_daily(symbol=f"{prefix}{stock_code}",
+                             start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+                             adjust="qfq")
+    if df is None or df.empty:
+        raise ConnectionError("备用接口返回数据为空")
+    # 新浪列名与东财不同,统一映射;成交量单位:股 → 手(与主源保持一致)
+    df = df.rename(columns={"open": "open_price", "high": "high_price",
+                            "low": "low_price", "close": "close_price", "volume": "volume"})
+    df["volume"] = df["volume"] // 100
+    df["stock_code"] = stock_code
+    return df
+
+
+def _fetch_mock_data(stock_code: str, days: int) -> pd.DataFrame:
+    """Level-3 最终兜底:本地 Mock 数据生成器,保障系统不崩溃"""
+    logger.critical("触发 [Level-3] 最终兜底:使用本地 Mock 数据生成器,保障系统不崩溃!")
+    global DATA_SOURCE
+    DATA_SOURCE = "mock"
+    # 生成符合 Schema 的假数据
+    dates = pd.date_range(end=pd.Timestamp.today(), periods=days).strftime("%Y-%m-%d")
+    df = pd.DataFrame({
+        "date": dates,
+        "open_price": np.random.uniform(1700, 1800, days),
+        "close_price": np.random.uniform(1700, 1800, days),
+        "high_price": np.random.uniform(1800, 1900, days),
+        "low_price": np.random.uniform(1600, 1700, days),
+        "volume": np.random.randint(10000, 50000, days),
+    })
+    df["stock_code"] = stock_code
+    return df
+
+
+def fetch_stock_with_degradation(stock_code: str = "600519", days: int = 90) -> dict:
+    """
+    带多级降级和重试机制的主采集函数(核心亮点)
+    返回: {"status": "success"|"degraded", "source": "real"|"backup"|"mock", "rows": 入库条数, ...}
+    """
+    global DATA_SOURCE
+    DATA_SOURCE = "real"  # 每次采集复位标记,防止上次 mock 状态污染本次结果
+
+    for attempt in range(3):  # 主通道带重试(指数退避)
+        try:
+            df = _fetch_from_akshare(stock_code, days)
+            DATA_SOURCE = "real"
+            rows = _save_to_db(df, session=None)
+            return {"status": "success", "source": DATA_SOURCE, "rows": rows}
+        except Exception as e:
+            logger.error("Level-1 主源拉取失败: %s,等待 %d 秒进行重试...", e, 2 ** attempt)
+            time.sleep(2 ** attempt)  # 指数退避,防止直接把服务器打挂
+
+    # 主源彻底失败,走备用源
+    try:
+        df = _fetch_from_backup(stock_code, days)
+        DATA_SOURCE = "backup"
+        rows = _save_to_db(df, session=None)
+        return {"status": "success", "source": DATA_SOURCE, "rows": rows}
+    except Exception as e:
+        logger.error("Level-2 备用源拉取失败: %s", e)
+
+    # 备用源也失败,走最终兜底(Mock 数据)
+    df = _fetch_mock_data(stock_code, days)
+    rows = _save_to_db(df, session=None)
+
+    # 向上抛出明确的降级状态
+    return {"status": "degraded", "source": DATA_SOURCE, "rows": rows,
+            "message": "系统已降级,输出为模拟数据"}
+
+
+def fetch_stock_data(symbol: str = "600519", days: int = 90) -> dict:
+    """
+    采集入口(供主程序/LangGraph 调用):内部走三级降级链,返回状态字典。
+    :param symbol: 股票代码,默认 600519(贵州茅台)
+    :param days:   回看天数,默认 90(近 3 个月)
+    """
+    start_time = time.perf_counter()
+    result = fetch_stock_with_degradation(symbol, days)
+    elapsed = time.perf_counter() - start_time
+    logger.info("fetch_stock_data 完成: status=%s, source=%s, rows=%s, 耗时 %.2f 秒",
+                result.get("status"), result.get("source"), result.get("rows"), elapsed)
+    return result
 
 
 if __name__ == "__main__":
