@@ -1,0 +1,44 @@
+# ============================================================
+# 多智能体股票分析系统 - Python 依赖
+# 安装: pip install -r requirements.txt
+# 国内加速: pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+# (版本号将在首次安装成功后回填锁定)
+# ============================================================
+
+# --- Web 框架 ---
+fastapi
+uvicorn[standard]
+
+# --- 多智能体编排 ---
+langgraph
+langchain
+langchain-ollama
+
+# --- 向量数据库 ---
+chromadb
+
+# --- 数据采集 ---
+akshare
+requests
+beautifulsoup4
+
+# --- 数据处理与存储 ---
+pandas
+sqlalchemy
+psycopg2-binary
+
+# --- 数据模型与配置 ---
+pydantic
+python-dotenv
+
+# --- Embedding(本地 BGE-M3)---
+sentence-transformers
+
+# --- 前端 ---
+streamlit
+plotly
+
+# --- 工具 ---
+tenacity
+httpx
+pytest
