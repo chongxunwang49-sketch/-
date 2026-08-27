@@ -34,6 +34,9 @@ python-dotenv==1.2.3
 # --- Embedding(本地 BGE-M3)---
 sentence-transformers==6.0.0
 
+# --- RAG 文档解析(提取财报 PDF 文本)---
+pypdf==6.16.2
+
 # --- 前端 ---
 streamlit==1.62.0
 plotly==7.0.0
