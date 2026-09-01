@@ -44,7 +44,7 @@ def render(pal: dict):
                         unsafe_allow_html=True)
             if c4.button("🔍 重新查看", key=f"re_{h['id']}", use_container_width=True):
                 st.session_state.code = h.get("stock_code", "600519")
-                st.session_state["page"] = "深度分析"
+                st.session_state["page"] = "deep"
                 st.session_state.analysis_result = None
                 st.rerun()
 

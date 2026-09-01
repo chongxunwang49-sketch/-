@@ -72,14 +72,19 @@ def confetti_html(message: str, colors: list[str] | None = None,
 
 
 def countup_html(value: float, decimals: int = 2, duration: int = 900,
-                 font_size: str = "30px", color: str = "#e8edf6") -> str:
-    """数字计速器:从 0 翻滚到目标值(带弹性收尾)"""
+                 font_size: str = "30px", color: str = "#e8edf6",
+                 el_id: str = "cu") -> str:
+    """数字计速器:从 0 翻滚到目标值(带弹性收尾)。
+
+    注意:同一 iframe 渲染多个 countup 时必须传不同 el_id,否则 id 冲突
+    (getElementById 只命中第一个,后渲染的会覆盖先前的显示)。
+    """
     return f"""
 <div style="font-size:{font_size};font-weight:800;font-variant-numeric:tabular-nums;
-            color:{color};text-shadow:0 0 14px rgba(79,140,255,.4);" id="cu">0</div>
+            color:{color};text-shadow:0 0 14px rgba(79,140,255,.4);" id="{el_id}">0</div>
 <script>
 (function(){{
-  var el = document.getElementById('cu');
+  var el = document.getElementById('{el_id}');
   var target = {value}, dec = {decimals}, dur = {duration};
   var t0 = null;
   function fmt(v){{

@@ -44,9 +44,9 @@ def _quote_card(pal: dict, info: dict) -> None:
     sign = "+" if up else ""
     pct_v = abs(pct) if pct is not None else 0.0
 
-    price_el = (wow.countup_html(float(price), 2, font_size="38px", color=pal["fg"])
+    price_el = (wow.countup_html(float(price), 2, font_size="38px", color=pal["fg"], el_id="cu_price")
                 if animate else f'<div style="font-size:38px;font-weight:800;color:{pal["fg"]};">{float(price):,.2f}</div>')
-    pct_el = (wow.countup_html(pct_v, 2, duration=700, font_size="22px", color=pct_color)
+    pct_el = (wow.countup_html(pct_v, 2, duration=700, font_size="22px", color=pct_color, el_id="cu_pct")
               if animate else f'<div style="font-size:22px;font-weight:800;color:{pct_color};">{sign}{pct_v:.2f}%</div>')
 
     oh, hi, lo = info.get("open"), info.get("high"), info.get("low")

@@ -98,9 +98,9 @@ def _svg_agents(cid: str) -> str:
         <circle cx="{x}" cy="{y}" r="20" fill="{color}" opacity=".22"/>
         <circle cx="{x}" cy="{y}" r="20" fill="none" stroke="{color}" stroke-width="1.5"/>
         <text x="{x}" y="{y+5}" fill="#e8edf6" font-size="13" font-weight="600" text-anchor="middle">{t}</text>
-        <line x1="{240}" y1="{160}" x2="{x}" y2="{y}" stroke="url(#gx)" stroke-width="1.2"
+        <line x1="{240}" y1="{160}" x2="{x}" y2="{y}" stroke="url(#gx-{cid})" stroke-width="1.2"
               stroke-dasharray="5 5" opacity=".55"/>
-        <circle cx="{(240+x)//2}" cy="{(160+y)//2}" r="4" fill="{color}" filter="url(#glow)"/>""")
+        <circle cx="{(240+x)//2}" cy="{(160+y)//2}" r="4" fill="{color}" filter="url(#glow-{cid})"/>""")
     return f"""<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
 {_defs(cid)}
 {hub.replace('url(#gx)', f'url(#gx-{cid})').replace('url(#gx-soft)', f'url(#gx-{cid}-soft)').replace('url(#glow)', f'url(#glow-{cid})')}
