@@ -62,33 +62,94 @@ def get_palette(theme_name: str) -> dict:
 
 
 def apply_theme(theme_name: str) -> dict:
-    """注入主题 CSS,返回配色字典"""
+    """注入主题 CSS,返回配色字典。
+
+    说明:Streamlit 原生控件的底色由 .streamlit/config.toml 决定(基色为暗色)。
+    因此暗色模式直接使用原生深色控件;亮色模式通过 surface_css 把原生控件表面
+    覆盖为"浅底深字",让下拉/输入/展开器/提示条等跟随页面颜色,避免深底深字看不清。
+    """
     pal = get_palette(theme_name)
+    fg, muted, border = pal["fg"], pal["muted"], pal["border"]
+
+    # 亮色模式:原生控件表面覆盖(浅底深字)
+    surface_css = ""
+    if pal["mode"] == "light":
+        surface_css = f"""
+    /* ---- 亮色:原生控件跟随页面(浅底深字) ---- */
+    /* 文本/数字/日期输入框 */
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input,
+    [data-testid="stTextArea"] textarea {{
+        background-color: #ffffff !important;
+        color: {fg} !important;
+        border-color: {border} !important;
+    }}
+    [data-testid="stTextInput"] input::placeholder {{
+        color: #9aa4b8 !important;
+    }}
+    /* 下拉选择框(选中值/箭头/占位) */
+    [data-testid="stSelectbox"] [data-baseweb="select"] {{
+        background-color: #ffffff !important;
+        color: {fg} !important;
+        border-color: {border} !important;
+    }}
+    [data-testid="stSelectbox"] [data-baseweb="select"] * {{ color: {fg} !important; }}
+    /* 下拉弹出菜单(渲染在 body 的 portal 中) */
+    ul[data-baseweb="menu"] {{
+        background-color: #ffffff !important;
+        color: {fg} !important;
+    }}
+    ul[data-baseweb="menu"] li {{ color: {fg} !important; }}
+    ul[data-baseweb="menu"] li[aria-selected="true"],
+    ul[data-baseweb="menu"] li:hover {{ background-color: #dbe7ff !important; }}
+    /* 展开器 */
+    [data-testid="stExpander"] details {{
+        background-color: #ffffff !important;
+        color: {fg} !important;
+        border-color: {border} !important;
+    }}
+    /* 提示条 / Toast */
+    [data-testid="stAlert"],
+    [data-testid="stToast"] {{
+        background-color: #ffffff !important;
+        color: {fg} !important;
+    }}
+    /* st.metric 数值与标签 */
+    [data-testid="stMetricValue"] {{ color: {fg} !important; }}
+    [data-testid="stMetricLabel"] p {{ color: {muted} !important; }}
+    """
+
     css = f"""
     <style>
     .stApp {{ background-color: {pal['bg']}; }}
-    [data-testid="stSidebar"] {{ background-color: {pal['card']}; border-right: 1px solid {pal['border']}; }}
+    [data-testid="stSidebar"] {{ background-color: {pal['card']}; border-right: 1px solid {border}; }}
     [data-testid="stHeader"] {{ background: transparent; }}
-    [data-testid="stSidebar"] * {{ color: {pal['fg']}; }}
-    h1, h2, h3, h4, h5, h6, p, span, label, div {{ color: {pal['fg']}; }}
+
+    /* ---- 文本跟随主题(标题/正文/控件标签/说明/展开器标题) ---- */
+    h1, h2, h3, h4, h5, h6, p, li, label, summary {{ color: {fg} !important; }}
+    [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] * {{ color: {fg} !important; }}
+    [data-testid="stRadio"] label, [data-testid="stRadio"] label *,
+    [data-testid="stCheckbox"] label, [data-testid="stCheckbox"] label * {{ color: {fg} !important; }}
+
     .stTabs [data-baseweb="tab-list"] {{ gap: 4px; }}
     .stTabs [data-baseweb="tab"] {{
-        background: {pal['card2']}; border: 1px solid {pal['border']}; border-radius: 8px 8px 0 0;
-        color: {pal['fg']}; padding: 6px 16px;
+        background: {pal['card2']}; border: 1px solid {border}; border-radius: 8px 8px 0 0;
+        color: {fg}; padding: 6px 16px;
     }}
-    .stTabs [aria-selected="true"] {{ background: {pal['accent']}; color: #fff; border-color: {pal['accent']}; }}
+    .stTabs [aria-selected="true"] {{ background: {pal['accent']}; color: #fff !important; border-color: {pal['accent']}; }}
 
     /* ---- 通用卡片 ---- */
     .tc-card {{
-        background: {pal['card']}; border: 1px solid {pal['border']}; border-radius: 12px;
+        background: {pal['card']}; border: 1px solid {border}; border-radius: 12px;
         padding: 14px 18px; margin-bottom: 10px;
     }}
-    .tc-label {{ font-size: 12px; color: {pal['muted']}; }}
-    .tc-value {{ font-size: 22px; font-weight: 700; color: {pal['fg']}; }}
+    .tc-label {{ font-size: 12px; color: {muted}; }}
+    .tc-value {{ font-size: 22px; font-weight: 700; color: {fg}; }}
     .tc-value.small {{ font-size: 16px; }}
-    .tc-sub {{ font-size: 12px; color: {pal['muted']}; }}
+    .tc-sub {{ font-size: 12px; color: {muted}; }}
     .tc-up {{ color: {pal['up']}; }} .tc-down {{ color: {pal['down']}; }}
-    .tc-accent {{ color: {pal['accent']}; }} .tc-warn {{ color: {pal['warning']}; }} .tc-ok {{ color: {pal['ok']}; }} .tc-danger {{ color: {pal['danger']}; }} .tc-muted {{ color: {pal['muted']}; }}
+    .tc-accent {{ color: {pal['accent']}; }} .tc-warn {{ color: {pal['warning']}; }} .tc-ok {{ color: {pal['ok']}; }} .tc-danger {{ color: {pal['danger']}; }} .tc-muted {{ color: {muted}; }}
 
     /* ---- 流水线动画(运行中呼吸灯) ---- */
     @keyframes tc-pulse {{
@@ -106,6 +167,7 @@ def apply_theme(theme_name: str) -> dict:
         background-size: 800px 100%; animation: tc-shimmer 1.6s infinite linear;
     }}
     .tc-skeleton.line {{ height: 18px; width: 100%; }}
+    {surface_css}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)

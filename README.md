@@ -35,24 +35,31 @@
 
 **核心设计理念:**
 - **多智能体通信靠数据契约**:所有 Agent 的输入/输出由 Pydantic 模型(`backend/schemas.py`)严格约束,坏数据进不来。
-- **模型可插拔**:`LLM_PROVIDER` 一行配置在 `ollama`(本地免费)/ `deepseek`(API 高质)/ `dify`(可视化搭建的智能体)间切换,架构上不留绑定。
+- **模型可插拔**:`LLM_PROVIDER` 一行配置在 `ollama`(本地免费)/ `deepseek`(API)/ `dify`(可视化搭建)/ `dashscope`(阿里云百炼,OpenAI 兼容)间切换,架构上不留绑定。
 - **高可用**:数据采集三级降级(主源→备用→Mock)+ 情感失败规则兜底,单个 Agent 挂了系统不崩。
 
 ---
 
-## 一·五、后端 API(专业看板升级)
+## 一·五、后端 API(专业看板升级 + 用户体系第一批)
 
 | 接口 | 说明 |
 |---|---|
 | `GET /health` | 健康检查 |
+| `POST /auth/register` | 注册(用户名唯一 + 密码强度),成功即返回 token |
+| `POST /auth/login` | 登录,返回 JWT |
+| `GET /auth/me` | 当前用户信息(需 Bearer) |
+| `PUT /user/profile` | 更新资料/改密码(需 Bearer) |
+| `GET /user/history` | 我的分析历史(需 Bearer) |
+| `GET/POST/DELETE /user/watchlist` | 自选股管理(需 Bearer) |
 | `GET /stock/info?code=600519` | 基础信息(名称/现价/涨跌幅/技术指标快照) |
-| `GET /stock/history?code=600519&range=3m` | K线历史(含 MA/MACD/RSI/BOLL 序列;`range=1m/3m/6m/1y/custom`,自定义用 `start`/`end`) |
-| `POST /analyze` | 异步启动分析,`{stock_code, mode}`(mode: `full`/`quick`),返回 `task_id` |
+| `GET /stock/history?code=600519&range=3m` | K线历史(含 MA/MACD/RSI/BOLL 序列;`range=1m/3m/6m/1y/custom`) |
+| `POST /analyze` | 异步启动分析(需 Bearer,自动写入分析历史),`{stock_code, mode}` |
 | `GET /task/status?task_id=...` | 轮询任务状态(各 Agent 阶段/耗时/降级标记) |
 | `GET /task/result?task_id=...` | 最终报告 + 全部中间数据 + LLM token 统计 |
-| `POST /analyze/sync`、`GET /analyze/stream` | 兼容旧接口(同步分析 / SSE 流式) |
+| `POST /analyze/sync`、`GET /analyze/stream` | 兼容旧接口 |
 
 **异步工作流**:`POST /analyze` 立即返回 `task_id` → 后端 `TaskManager` 后台线程跑 LangGraph,消费 `graph.stream()` 事件流映射各 Agent 进度 → 前端每 ~1s 轮询 `/task/status`,完成后取 `/task/result`。
+**用户体系**:bcrypt 密码散列 + JWT(HS256) 认证;首次启动自动创建管理员 `admin/admin123`(可用 `ADMIN_USERNAME/ADMIN_PASSWORD` 覆盖);`/analyze` 需登录,完成后写入该用户 `analysis_history`。
 **分析模式**:`full` = 完整链路(采集→技术∥情感→风险→报告+RAG);`quick` = 跳过情感分析(更快)。
 
 ---
@@ -76,11 +83,14 @@ stock-agent-system/
 │   │   └── report.py      #   报告生成 Agent
 │   ├── services/
 │   │   ├── task_manager.py # 异步任务管理(线程 + stream 事件 -> Agent 进度)
-│   │   └── stock_meta.py   # A股标的映射表(名称补全)
+│   │   ├── stock_meta.py   # A股标的映射表(名称补全)
+│   │   ├── auth.py         # 用户认证(bcrypt + JWT + 密码强度)
+│   │   └── history_service.py # 分析历史落库 + 综合评分
 │   └── graph/workflow.py  # LangGraph 编排(并行+条件路由+降级)
 ├── frontend/              # Streamlit 专业投研终端
-│   ├── app.py             # 主页面(侧边栏+行情卡+K线+5个Tab)
-│   ├── api_client.py      # 后端 API 客户端(异步轮询)
+│   ├── app.py             # 主页面(登录门禁 + 侧边栏 + 行情卡 + K线 + 5个Tab)
+│   ├── auth_ui.py         # 登录/注册页(暗色粒子动画 + 密码强度)
+│   ├── api_client.py      # 后端 API 客户端(认证 + 异步轮询)
 │   ├── stock_map.py       # A股标的映射(前端副本)
 │   ├── theme.py           # 暗色/亮色主题 + 全局 CSS
 │   └── components/        # 图表/流水线/报告卡片组件

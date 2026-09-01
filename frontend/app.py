@@ -50,12 +50,24 @@ if "last_stages" not in st.session_state:
     st.session_state.last_stages = None
 if "llm_stats" not in st.session_state:
     st.session_state.llm_stats = None
+if "token" not in st.session_state:
+    st.session_state.token = None
+if "user" not in st.session_state:
+    st.session_state.user = None
 if "backend_ok" not in st.session_state:
     try:
         health()
         st.session_state.backend_ok = True
     except ApiError:
         st.session_state.backend_ok = False
+
+# ------------------------------------------------------------
+# 认证门禁:未登录一律先登录/注册
+# ------------------------------------------------------------
+if not st.session_state.token:
+    from auth_ui import render_auth
+    render_auth(pal)
+    st.stop()
 
 # 后台数据缓存(历史行情与分析信息,短 TTL 即可)
 @st.cache_data(ttl=120, show_spinner=False)
@@ -93,6 +105,25 @@ with st.sidebar:
                             horizontal=True, label_visibility="collapsed")
     if theme_choice != st.session_state.theme:
         st.session_state.theme = theme_choice
+        st.rerun()
+
+    # 用户信息 + 退出登录
+    _user = st.session_state.user or {}
+    _role_badge = "👑 管理员" if _user.get("role") == "admin" else "👤 普通用户"
+    st.markdown(f"""
+    <div class="tc-card" style="padding:10px 12px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <div style="width:34px;height:34px;border-radius:50%;background:{pal['accent']};color:#fff;
+                    display:flex;align-items:center;justify-content:center;font-size:16px;">👤</div>
+        <div>
+          <div style="font-size:14px;font-weight:700;color:{pal['fg']};">{_user.get('username', '-')}</div>
+          <div style="font-size:11px;color:{pal['muted']};">{_role_badge}</div>
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+    if st.button("🚪 退出登录", use_container_width=True):
+        from auth_ui import logout
+        logout()
         st.rerun()
 
     st.markdown("---")
@@ -138,13 +169,18 @@ with st.sidebar:
 
     if st.button("🚀 重新分析", type="primary", use_container_width=True, disabled=running):
         try:
-            resp = start_analysis(code or "600519", mode_key)
+            resp = start_analysis(code or "600519", mode_key, token=st.session_state.token)
             st.session_state.running_task = resp["task_id"]
             _reset_analysis()
             cached_info.clear()
             cached_history.clear()
             st.rerun()
         except ApiError as e:
+            if e.status_code == 401:  # token 过期 → 回登录页
+                from auth_ui import logout
+                logout()
+                st.toast("登录已过期,请重新登录", icon="🔐")
+                st.rerun()
             st.toast(f"启动分析失败: {e}", icon="❌")
 
     st.markdown("---")

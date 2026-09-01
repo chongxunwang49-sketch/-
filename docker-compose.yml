@@ -43,9 +43,18 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: stock_agent
-      LLM_PROVIDER: ollama
+      # LLM 可插拔:默认 ollama;设 LLM_PROVIDER=dashscope 并配 DASHSCOPE_API_KEY 走阿里云百炼
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
       OLLAMA_BASE_URL: http://host.docker.internal:11434
-      EMBED_PROVIDER: ollama
+      EMBED_PROVIDER: ${EMBED_PROVIDER:-ollama}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_BASE_URL: ${DASHSCOPE_BASE_URL:-https://dashscope.aliyuncs.com/compatible-mode/v1}
+      DASHSCOPE_MODEL: ${DASHSCOPE_MODEL:-qwen-plus}
+      # 用户体系(第一批)
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me-in-prod}
+      JWT_EXPIRE_HOURS: ${JWT_EXPIRE_HOURS:-72}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
     depends_on:
       postgres:
         condition: service_healthy

@@ -18,6 +18,12 @@ from plotly.subplots import make_subplots
 MA_COLORS = {"ma5": "#f0b90b", "ma10": "#4f8cff", "ma20": "#e040fb", "ma60": "#ff7043"}
 
 
+def _rgba(hex_color: str, alpha: float) -> str:
+    """#RRGGBB -> rgba(r,g,b,alpha)(plotly 5.x 不接受 8 位 HEX,统一转 rgba)"""
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
 def _base_layout(pal: dict, height: int, title: str = "") -> dict:
     return dict(
         template="plotly_dark" if pal["mode"] == "dark" else "plotly_white",
@@ -31,12 +37,21 @@ def _base_layout(pal: dict, height: int, title: str = "") -> dict:
 
 
 def _style_axes(fig: go.Figure, pal: dict, n_rows: int):
-    """统一坐标轴样式:网格线/零线/十字光标"""
-    for i in range(1, n_rows + 1):
-        fig.update_xaxes(gridcolor=pal["grid"], zeroline=False, row=i, col=1,
-                         showspikes=(i == 1), spikemode="across",
-                         spikecolor=pal["muted"], spikethickness=1)
-        fig.update_yaxes(gridcolor=pal["grid"], zeroline=False, row=i, col=1)
+    """统一坐标轴样式:网格线/零线/十字光标。
+
+    注意:只有 make_subplots 的图才有 subplot 网格,普通 go.Figure 传 row/col 会报错,
+    plotly 5.x 下需分情况处理。
+    """
+    if fig._grid_ref:  # 有子图网格
+        for i in range(1, n_rows + 1):
+            fig.update_xaxes(gridcolor=pal["grid"], zeroline=False, row=i, col=1,
+                             showspikes=(i == 1), spikemode="across",
+                             spikecolor=pal["muted"], spikethickness=1)
+            fig.update_yaxes(gridcolor=pal["grid"], zeroline=False, row=i, col=1)
+    else:  # 普通单图
+        fig.update_xaxes(gridcolor=pal["grid"], zeroline=False, showspikes=True,
+                         spikemode="across", spikecolor=pal["muted"], spikethickness=1)
+        fig.update_yaxes(gridcolor=pal["grid"], zeroline=False)
 
 
 def build_kline_chart(df: pd.DataFrame, pal: dict, ma_periods: list[int],
@@ -58,17 +73,17 @@ def build_kline_chart(df: pd.DataFrame, pal: dict, ma_periods: list[int],
     )
 
     # ---- 主图:蜡烛 + 均线 ----
+    # 注意:plotly 5.x 的 Candlestick 不支持 hovertemplate,用 hovertext 数组构造悬停(兼容 5/7 两版)
+    hover_texts = [
+        f"<b>{d}</b><br>开 {o:.2f}<br>高 {h:.2f}<br>低 {l:.2f}<br>收 {c:.2f}<br>量 {v:,.0f}"
+        for d, o, h, l, c, v in zip(df["date"], df["open"], df["high"],
+                                    df["low"], df["close"], df["volume"])
+    ]
     fig.add_trace(go.Candlestick(
         x=df["date"], open=df["open"], high=df["high"], low=df["low"], close=df["close"],
         increasing_line_color=up, increasing_fillcolor=up,
         decreasing_line_color=down, decreasing_fillcolor=down,
-        name="K线", showlegend=False,
-        customdata=df[["open", "high", "low", "close", "volume"]].values,
-        hovertemplate=(
-            "<b>%{x}</b><br>开 %{customdata[0]:.2f}<br>高 %{customdata[1]:.2f}"
-            "<br>低 %{customdata[2]:.2f}<br>收 %{customdata[3]:.2f}"
-            "<br>量 %{customdata[4]:,.0f}<extra></extra>"
-        ),
+        name="K线", showlegend=False, text=hover_texts, hoverinfo="text",
     ), row=1, col=1)
 
     for w in ma_periods:
@@ -140,11 +155,17 @@ def build_sentiment_timeline(items: list[dict], overall: float | None,
             hovertemplate="%{x}<br>情感得分 %{y:.2f}<br>%{text}<extra></extra>",
             name="新闻情绪",
         ))
-    fig.add_hline(y=0.5, line_dash="dot", line_color=pal["muted"], line_width=1)
-    if overall is not None:
-        fig.add_hline(y=overall, line=dict(color=pal["accent"], width=2),
-                      annotation_text=f"总体均值 {overall:.2f}",
-                      annotation_position="top left")
+    # plotly 5.x 的 add_hline 需要子图网格,统一用 add_shape 画参考线
+    x0, x1 = (xs[0], xs[-1]) if xs else ("", "")
+    fig.add_shape(type="line", xref="x", yref="y", x0=x0, x1=x1, y0=0.5, y1=0.5,
+                  line=dict(dash="dot", width=1, color=pal["muted"]), layer="below")
+    if overall is not None and xs:
+        fig.add_shape(type="line", xref="x", yref="y", x0=x0, x1=x1,
+                      y0=overall, y1=overall,
+                      line=dict(width=2, color=pal["accent"]), layer="below")
+        fig.add_annotation(x=x1, y=overall, text=f"总体均值 {overall:.2f}",
+                           showarrow=False, yanchor="bottom", xanchor="right",
+                           font=dict(color=pal["accent"], size=11))
     if not xs:
         fig.add_annotation(text="暂无逐条新闻情绪数据(情感 Agent 未返回明细)", showarrow=False,
                            font=dict(color=pal["muted"]))
@@ -173,9 +194,9 @@ def build_gauge(score: float, pal: dict, title: str = "综合评分", height: in
             bar=dict(color=_score_color(score, pal), thickness=0.32),
             bgcolor="rgba(0,0,0,0)",
             steps=[
-                dict(range=[0, 0.4], color=f"{pal['down']}55"),
-                dict(range=[0.4, 0.6], color=f"{pal['warning']}55"),
-                dict(range=[0.6, 1.0], color=f"{pal['up']}55"),
+                dict(range=[0, 0.4], color=_rgba(pal["down"], 0.35)),
+                dict(range=[0.4, 0.6], color=_rgba(pal["warning"], 0.35)),
+                dict(range=[0.6, 1.0], color=_rgba(pal["up"], 0.35)),
             ],
             threshold=dict(line=dict(color=pal["fg"], width=2), value=score),
         ),

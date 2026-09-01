@@ -19,18 +19,28 @@ FastAPI 后端入口(步骤13 + 专业看板升级)
 """
 import json
 import logging
+import os
 from datetime import date, datetime, timedelta
-from typing import List
+from typing import List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from .graph.workflow import _load_latest_quotes, build_workflow
-from .models import StockPrice, engine
-from .services import stock_meta
+from .models import StockPrice, User, Watchlist, engine
+from .models import SessionLocal
+from .services import history_service, stock_meta
+from .services.auth import (
+    create_token,
+    get_current_user,
+    get_user_by_name,
+    hash_password,
+    password_strength,
+    verify_password,
+)
 from .services.task_manager import TaskManager
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -53,6 +63,27 @@ class AnalyzeRequest(BaseModel):
     @classmethod
     def _check_mode(cls, v: str) -> str:
         return v if v in ("quick", "full") else "full"
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    email: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class ProfileUpdateRequest(BaseModel):
+    email: Optional[str] = None
+    old_password: Optional[str] = None
+    new_password: Optional[str] = None
+
+
+class WatchlistAddRequest(BaseModel):
+    stock_code: str
 
 
 def _initial_state(code: str, mode: str = "full") -> dict:
@@ -201,6 +232,175 @@ def health():
 
 
 # ------------------------------------------------------------
+# 启动:建表 + 管理员种子
+# ------------------------------------------------------------
+def _seed_admin() -> None:
+    """首次启动时创建管理员账号(env 可配,默认 admin/admin123)"""
+    admin_user = os.getenv("ADMIN_USERNAME", "admin")
+    admin_pass = os.getenv("ADMIN_PASSWORD", "admin123")
+    if get_user_by_name(admin_user) is None:
+        with SessionLocal() as session:
+            session.add(User(username=admin_user, password_hash=hash_password(admin_pass),
+                             email=None, role="admin"))
+            session.commit()
+        logger.info("已创建管理员账号: %s", admin_user)
+
+
+@app.on_event("startup")
+def _startup():
+    try:
+        from .models import create_tables
+        create_tables()          # 幂等建表(补齐 users/watchlist/analysis_history/chat_history)
+        _seed_admin()
+    except Exception as e:
+        logger.warning("启动建表/种子初始化失败(不影响进程启动): %s", e)
+
+
+# ------------------------------------------------------------
+# 认证:注册 / 登录 / 当前用户
+# ------------------------------------------------------------
+@app.post("/auth/register")
+def register(req: RegisterRequest):
+    """用户注册:用户名唯一 + 密码强度检测,成功直接返回 token(免二次登录)"""
+    username = req.username.strip()
+    if not (3 <= len(username) <= 20) or not username.replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="用户名需为 3-20 位字母/数字/下划线")
+    if get_user_by_name(username):
+        raise HTTPException(status_code=409, detail="用户名已存在")
+    strength = password_strength(req.password)
+    if not strength["ok"]:
+        raise HTTPException(status_code=400,
+                            detail=f"密码强度不足({strength['label']}),建议至少 8 位且含大小写字母/数字")
+    user = User(username=username, password_hash=hash_password(req.password),
+                email=(req.email or "").strip() or None, role="user")
+    with SessionLocal() as session:
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+    token = create_token(user)
+    return {"token": token, "user": _user_payload(user)}
+
+
+@app.post("/auth/login")
+def login(req: LoginRequest):
+    """用户登录,校验密码并更新 last_login,返回 token"""
+    user = get_user_by_name(req.username.strip())
+    if user is None or not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    user.last_login = datetime.now()
+    with SessionLocal() as session:
+        session.add(user)
+        session.commit()
+    token = create_token(user)
+    return {"token": token, "user": _user_payload(user)}
+
+
+@app.get("/auth/me")
+def me(user: User = Depends(get_current_user)):
+    """返回当前登录用户信息(用于前端会话校验)"""
+    return _user_payload(user)
+
+
+def _user_payload(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "created_at": user.created_at.strftime("%Y-%m-%d %H:%M:%S") if user.created_at else None,
+        "last_login": user.last_login.strftime("%Y-%m-%d %H:%M:%S") if user.last_login else None,
+    }
+
+
+# ------------------------------------------------------------
+# 用户中心:资料 / 历史 / 自选股
+# ------------------------------------------------------------
+@app.put("/user/profile")
+def update_profile(req: ProfileUpdateRequest, user: User = Depends(get_current_user)):
+    """更新资料:邮箱或修改密码(改密码需验证当前密码)"""
+    if req.email is not None:
+        user.email = req.email.strip() or None
+    if req.new_password:
+        if not req.old_password or not verify_password(req.old_password, user.password_hash):
+            raise HTTPException(status_code=400, detail="当前密码不正确")
+        strength = password_strength(req.new_password)
+        if not strength["ok"]:
+            raise HTTPException(status_code=400, detail="新密码强度不足")
+        user.password_hash = hash_password(req.new_password)
+    with SessionLocal() as session:
+        session.add(user)
+        session.commit()
+    return {"ok": True, "user": _user_payload(user)}
+
+
+@app.get("/user/history")
+def user_history(user: User = Depends(get_current_user)):
+    """当前用户的历史分析记录(时间倒序)"""
+    return {"items": history_service.list_user_history(user.id)}
+
+
+def _watchlist_quote(stock_code: str) -> dict:
+    """读取自选股最新价/涨跌幅(库中有数据时),无数据返回 None"""
+    try:
+        rows = _load_history(stock_code, date(1900, 1, 1), date.today())
+    except Exception:
+        rows = []
+    if len(rows) < 2:
+        return {"price": None, "pct_change": None}
+    latest, prev = rows[-1], rows[-2]
+    pct = round((latest.close_price / prev.close_price - 1) * 100, 2)
+    return {"price": latest.close_price, "pct_change": pct}
+
+
+@app.get("/user/watchlist")
+def watchlist_list(user: User = Depends(get_current_user)):
+    """当前用户自选股列表(附最新价/涨跌幅)"""
+    with SessionLocal() as session:
+        rows = session.scalars(
+            select(Watchlist)
+            .where(Watchlist.user_id == user.id)
+            .order_by(Watchlist.sort_order, Watchlist.id)
+        ).all()
+    items = []
+    for r in rows:
+        quote = _watchlist_quote(r.stock_code)
+        items.append({
+            "stock_code": r.stock_code,
+            "stock_name": r.stock_name or stock_meta.lookup_name(r.stock_code),
+            "price": quote["price"],
+            "pct_change": quote["pct_change"],
+            "sort_order": r.sort_order,
+            "created_at": r.created_at.strftime("%Y-%m-%d %H:%M:%S") if r.created_at else None,
+        })
+    return {"items": items}
+
+
+@app.post("/user/watchlist")
+def watchlist_add(req: WatchlistAddRequest, user: User = Depends(get_current_user)):
+    """添加自选股(重复则 409)"""
+    code = req.stock_code.strip()
+    with SessionLocal() as session:
+        exists = session.scalar(select(Watchlist).where(
+            Watchlist.user_id == user.id, Watchlist.stock_code == code))
+        if exists:
+            raise HTTPException(status_code=409, detail="该股票已在自选股中")
+        session.add(Watchlist(user_id=user.id, stock_code=code,
+                              stock_name=stock_meta.lookup_name(code)))
+        session.commit()
+    return {"ok": True, "stock_code": code, "stock_name": stock_meta.lookup_name(code)}
+
+
+@app.delete("/user/watchlist")
+def watchlist_delete(stock_code: str, user: User = Depends(get_current_user)):
+    """从自选股删除"""
+    with SessionLocal() as session:
+        session.execute(delete(Watchlist).where(
+            Watchlist.user_id == user.id, Watchlist.stock_code == stock_code))
+        session.commit()
+    return {"ok": True}
+
+
+# ------------------------------------------------------------
 # 基础数据:股票信息 / 历史行情
 # ------------------------------------------------------------
 @app.get("/stock/info")
@@ -270,10 +470,12 @@ def stock_history(
 # 异步分析任务
 # ------------------------------------------------------------
 @app.post("/analyze")
-def start_analysis(req: AnalyzeRequest):
-    """异步启动分析,立即返回 task_id。mode: quick=跳过情感分析(更快) / full=完整链路"""
-    task = task_manager.create(req.stock_code, mode=req.mode)
-    logger.info("启动分析任务: task_id=%s code=%s mode=%s", task.task_id, req.stock_code, req.mode)
+def start_analysis(req: AnalyzeRequest, user: User = Depends(get_current_user)):
+    """异步启动分析,立即返回 task_id。mode: quick=跳过情感分析(更快) / full=完整链路
+    需要登录;分析完成后自动写入该用户的 analysis_history。"""
+    task = task_manager.create(req.stock_code, mode=req.mode, user_id=user.id)
+    logger.info("启动分析任务: task_id=%s code=%s mode=%s user=%s",
+                task.task_id, req.stock_code, req.mode, user.username)
     return {"task_id": task.task_id, "status": task.status, "stock_code": req.stock_code}
 
 

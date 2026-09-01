@@ -13,6 +13,7 @@ uvicorn[standard]==0.52.4
 langgraph==1.2.11
 langchain==1.3.17
 langchain-ollama==1.1.0
+langchain-openai==1.3.5    # OpenAI 兼容通道(deepseek / 阿里云百炼 dashscope 提供方依赖)
 
 # --- 向量数据库 ---
 chromadb==1.5.9
@@ -30,6 +31,10 @@ psycopg2-binary==2.9.12
 # --- 数据模型与配置 ---
 pydantic==2.13.4
 python-dotenv==1.2.3
+
+# --- 用户体系(第一批) ---
+bcrypt==4.3.0          # 密码散列
+PyJWT==2.10.1          # JWT 身份认证
 
 # --- Embedding(本地 BGE-M3)---
 sentence-transformers==6.0.0

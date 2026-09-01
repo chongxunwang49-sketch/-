@@ -68,10 +68,11 @@ class Stage:
 class TaskRecord:
     """一次分析任务的状态容器(线程共享,用锁保护写操作)"""
 
-    def __init__(self, task_id: str, stock_code: str, mode: str):
+    def __init__(self, task_id: str, stock_code: str, mode: str, user_id: Optional[int] = None):
         self.task_id = task_id
         self.stock_code = stock_code
         self.mode = mode          # quick / full
+        self.user_id = user_id    # 触发分析的用户(为空则不落分析历史)
         self.status = "pending"   # pending / running / completed / failed
         self.error: Optional[str] = None
         self.data_source = "real"
@@ -100,8 +101,8 @@ class TaskManager:
         self._lock = threading.Lock()
 
     # ---------- 对外接口 ----------
-    def create(self, stock_code: str, mode: str = "full") -> TaskRecord:
-        task = TaskRecord(uuid.uuid4().hex[:12], stock_code, mode)
+    def create(self, stock_code: str, mode: str = "full", user_id: Optional[int] = None) -> TaskRecord:
+        task = TaskRecord(uuid.uuid4().hex[:12], stock_code, mode, user_id=user_id)
         with self._lock:
             self._tasks[task.task_id] = task
             self._cleanup_locked()
@@ -196,6 +197,12 @@ class TaskManager:
 
             task.result = self._build_result(task, done)
             task.status = "completed"
+            # 分析历史落库(仅登录用户;失败不影响主流程)
+            try:
+                from .history_service import save_analysis_history
+                save_analysis_history(task.user_id, task.result)
+            except Exception as e:
+                logger.warning("分析历史入库异常(忽略): %s", e)
         except Exception as e:
             logger.exception("[task %s] 分析失败", task.task_id)
             task.status = "failed"
@@ -229,6 +236,7 @@ class TaskManager:
                      for k in ("calls", "prompt_tokens", "completion_tokens", "total_tokens")}
 
         return {
+            "stock_code": task.stock_code,
             "report": report.model_dump(mode="json") if report else None,
             "technical": technical.model_dump(mode="json") if technical else None,
             "technical_analysis": (done.get("technical") or {}).get("technical_analysis"),

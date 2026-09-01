@@ -24,7 +24,8 @@ from typing import Dict, Iterator, Optional
 from dotenv import load_dotenv
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-load_dotenv()
+# 项目 .env 为配置权威:避免系统环境残留同名变量(如旧的 DASHSCOPE_API_KEY)覆盖新配置
+load_dotenv(override=True)
 
 # 本地服务请求绝不允许被系统代理接管(否则 127.0.0.1:11434 会被代理拦成 502)
 os.environ.setdefault("NO_PROXY", "localhost,127.0.0.1,0.0.0.0")
@@ -35,6 +36,7 @@ logger = logging.getLogger(__name__)
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_DEEPSEEK = "deepseek"
 PROVIDER_DIFY = "dify"
+PROVIDER_DASHSCOPE = "dashscope"  # 阿里云百炼(DashScope),OpenAI 兼容协议
 
 
 class LLMError(RuntimeError):
@@ -75,6 +77,8 @@ class LLMClient:
             self._init_deepseek()
         elif self.provider == PROVIDER_DIFY:
             self._init_dify()
+        elif self.provider == PROVIDER_DASHSCOPE:
+            self._init_dashscope()
         else:
             raise LLMError(f"未知的 LLM_PROVIDER: {self.provider}")
         logger.info("LLMClient 就绪: provider=%s, timeout=%ds", self.provider, self.timeout)
@@ -107,20 +111,35 @@ class LLMClient:
         # 4 组角色 app 配置见 .env 的 DIFY_{ROLE}_APP_ID / DIFY_{ROLE}_API_KEY
         self.dify_base = os.getenv("DIFY_BASE_URL", "http://localhost/v1")
 
+    def _init_dashscope(self):
+        # 阿里云百炼(DashScope)兼容 OpenAI 协议,直接复用 ChatOpenAI
+        from langchain_openai import ChatOpenAI
+        api_key = os.getenv("DASHSCOPE_API_KEY", "")
+        if not api_key:
+            raise LLMError("LLM_PROVIDER=dashscope 但未配置 DASHSCOPE_API_KEY(.env)")
+        self._llm = ChatOpenAI(
+            model=os.getenv("DASHSCOPE_MODEL", "qwen-plus"),
+            base_url=os.getenv("DASHSCOPE_BASE_URL",
+                               "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            api_key=api_key,
+            temperature=0.7,
+            timeout=self.timeout,
+        )
+
     # ---------------- 核心调用 ----------------
     @_retry_decorator()
     def complete(self, system_prompt: str, user_prompt: str, temperature: float = 0.7,
                  json_mode: bool = False) -> str:
         """同步完整回复。json_mode 提示模型输出 JSON(仅提示,仍靠 extract_json 兜底)"""
         start = time.perf_counter()
-        if self.provider in (PROVIDER_OLLAMA, PROVIDER_DEEPSEEK):
+        if self.provider in (PROVIDER_OLLAMA, PROVIDER_DEEPSEEK, PROVIDER_DASHSCOPE):
             messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ]
             kwargs = {}
-            if json_mode and self.provider == PROVIDER_DEEPSEEK:
-                kwargs["response_format"] = {"type": "json_object"}  # DeepSeek 原生支持
+            if json_mode and self.provider in (PROVIDER_DEEPSEEK, PROVIDER_DASHSCOPE):
+                kwargs["response_format"] = {"type": "json_object"}  # DeepSeek/DashScope 原生支持 JSON 输出
             resp = self._llm.invoke(messages, **kwargs)
             text = resp.content if isinstance(resp.content, str) else str(resp.content)
             usage = getattr(resp, "usage_metadata", None)
@@ -153,8 +172,8 @@ class LLMClient:
         return outputs
 
     def stream_complete(self, system_prompt: str, user_prompt: str) -> Iterator[str]:
-        """流式回复(报告生成用,逐 token 吐出,前端可实时展示)。仅 ollama/deepseek。"""
-        if self.provider not in (PROVIDER_OLLAMA, PROVIDER_DEEPSEEK):
+        """流式回复(报告生成用,逐 token 吐出,前端可实时展示)。仅 ollama/deepseek/dashscope。"""
+        if self.provider not in (PROVIDER_OLLAMA, PROVIDER_DEEPSEEK, PROVIDER_DASHSCOPE):
             yield self.complete(system_prompt, user_prompt)
             return
         messages = [
