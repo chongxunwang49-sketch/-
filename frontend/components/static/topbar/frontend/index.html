@@ -6,69 +6,93 @@
 <style>
   :root {
     --fg:#e8edf6; --muted:#8792a8; --acc:#4f8cff; --purple:#b45cff;
-    --card:rgba(16,22,36,.72); --danger:#ff5b4d;
+    --card:rgba(16,22,36,.72); --danger:#ff5b4d; --ok:#2eb872;
   }
   body { margin:0; font-family:"Microsoft YaHei", sans-serif; background:transparent; }
-  .tb { display:flex; align-items:center; justify-content:space-between; gap:14px;
-        height:44px; padding:0 18px; box-sizing:border-box;
+  .tb { display:flex; align-items:center; justify-content:space-between; gap:12px;
+        height:46px; padding:0 16px; box-sizing:border-box;
         background:var(--card); border:1px solid rgba(79,140,255,.22);
         border-radius:14px; box-shadow:0 6px 22px rgba(0,0,0,.22);
         backdrop-filter:blur(12px); }
-  .tb-left { display:flex; align-items:center; gap:14px; }
-  .search { cursor:pointer; font-size:17px; padding:4px 8px; border-radius:8px;
-            transition:transform .25s cubic-bezier(.34,1.56,.64,1); }
-  .search:hover { transform:scale(1.2); background:rgba(79,140,255,.18); }
-  .clock { font-size:21px; font-weight:800; font-variant-numeric:tabular-nums;
+  .tb-left { display:flex; align-items:center; gap:12px; }
+  .tb-right { display:flex; align-items:center; gap:12px; position:relative; }
+
+  /* 图标按钮(游戏化) */
+  .ibtn { cursor:pointer; font-size:16px; padding:5px 8px; border-radius:9px;
+          position:relative; transition:all .28s cubic-bezier(.34,1.56,.64,1);
+          border:1px solid transparent; }
+  .ibtn:hover { transform:translateY(-2px) scale(1.12);
+                background:rgba(79,140,255,.16); border-color:rgba(79,140,255,.35);
+                box-shadow:0 4px 14px rgba(79,140,255,.3); }
+  .ibtn:active { transform:scale(.9); }
+  .ibtn.on { background:linear-gradient(120deg,rgba(79,140,255,.25),rgba(180,92,255,.22));
+             border-color:rgba(180,92,255,.5); box-shadow:0 0 12px rgba(124,92,255,.4); }
+
+  .clock { font-size:20px; font-weight:800; font-variant-numeric:tabular-nums;
            letter-spacing:1px; color:var(--fg); text-shadow:0 0 12px rgba(79,140,255,.55); }
   .clock b { animation:tb-colon 1s steps(1) infinite; }
   @keyframes tb-colon { 50% { opacity:.25; } }
   .tb-date { font-size:12px; color:var(--muted); }
-  .tb-right { display:flex; align-items:center; gap:16px; position:relative; }
-  .src-dot { width:10px; height:10px; border-radius:50%;
-             animation:tb-src 1.6s ease-in-out infinite; }
+
+  .st-dot { width:10px; height:10px; border-radius:50%; }
+  .st-be { display:flex; align-items:center; gap:6px; font-size:11px; color:var(--muted); }
+  .st-dot.on { animation:tb-src 1.6s ease-in-out infinite; }
   @keyframes tb-src { 0%,100% { opacity:1; } 50% { opacity:.4; } }
   .tb-src { font-size:12px; color:var(--muted); }
+
   .tb-bell { font-size:16px; cursor:pointer; position:relative; }
   .tb-bell.shake { animation:tb-shake .6s ease-in-out; }
   @keyframes tb-shake { 0%,100% { transform:rotate(0); } 25% { transform:rotate(-14deg); } 75% { transform:rotate(12deg); } }
   .badge { position:absolute; top:-5px; right:-8px; background:var(--danger); color:#fff;
            font-size:9px; border-radius:8px; padding:0 4px; font-style:normal; }
+
   .tb-avatar { width:30px; height:30px; border-radius:50%; display:flex; align-items:center;
                justify-content:center; font-size:14px; font-weight:800; color:#fff; cursor:pointer;
                background:linear-gradient(135deg, var(--acc), var(--purple));
                box-shadow:0 0 12px rgba(79,140,255,.5);
                transition:transform .3s cubic-bezier(.34,1.56,.64,1); }
   .tb-avatar:hover { transform:scale(1.12); }
-  .tb-drop { position:absolute; right:0; top:38px; min-width:190px; padding:12px 14px;
-             background:rgba(13,19,32,.94); border:1px solid rgba(79,140,255,.3);
+  .tb-drop { position:absolute; right:0; top:42px; min-width:210px; padding:14px 16px;
+             background:rgba(13,19,32,.95); border:1px solid rgba(79,140,255,.3);
              border-radius:12px; font-size:12px; color:var(--fg);
              box-shadow:0 16px 40px rgba(0,0,0,.45); backdrop-filter:blur(14px);
              opacity:0; transform:translateY(-8px) scale(.96); pointer-events:none;
-             transition:all .3s cubic-bezier(.34,1.56,.64,1); z-index:50; }
+             transition:all .3s cubic-bezier(.34,1.56,.64,1); z-index:60; }
   .tb-right:hover .tb-drop { opacity:1; transform:translateY(0) scale(1); pointer-events:auto; }
   .tb-drop .nm { font-size:14px; font-weight:700; }
   .tb-drop .rl { color:var(--purple); }
   .tb-drop .tip { color:var(--muted); font-size:11px; margin-top:6px; }
+  .tb-drop .logout { margin-top:10px; text-align:center; cursor:pointer; padding:7px 0;
+                     border-radius:9px; background:rgba(255,91,77,.14); border:1px solid rgba(255,91,77,.35);
+                     color:#ff8f85; font-weight:700; transition:all .25s cubic-bezier(.34,1.56,.64,1); }
+  .tb-drop .logout:hover { background:rgba(255,91,77,.28); transform:scale(1.03); }
 </style>
 </head>
 <body>
 <div class="tb">
   <div class="tb-left">
-    <span class="search" id="tbsearch" title="全局搜索 (Ctrl+K)">🔍</span>
+    <span class="ibtn" id="tbsearch" title="全局搜索 (Ctrl+K)">🔍</span>
     <span class="clock" id="tbclock">--<b>:</b>--<b>:</b>--</span>
     <span class="tb-date" id="tbdate"></span>
   </div>
   <div class="tb-right">
-    <span class="src-dot" id="srcDot"></span>
-    <span class="tb-src" id="srcText">—</span>
+    <span class="st-be" title="后端状态"><span class="st-dot on" id="bkDot"></span><span id="bkText">—</span></span>
+    <span class="st-be" title="数据源"><span class="st-dot" id="srcDot" style="box-shadow:0 0 8px currentColor;"></span><span class="tb-src" id="srcText">—</span></span>
+    <span class="ibtn" id="btnTheme" title="切换主题">🌙</span>
+    <span class="ibtn" id="btnCyber" title="赛博朋克模式">⚡</span>
     <span class="tb-bell" id="bell">🔔</span>
     <span class="tb-avatar" id="avatar">?</span>
-    <div class="tb-drop" id="drop"><div class="nm">—</div><div class="rl">—</div><div class="tip">退出请用侧边栏「🚪 退出登录」</div></div>
+    <div class="tb-drop" id="drop">
+      <div class="nm">👤 <span id="uName">-</span></div>
+      <div class="rl" id="uRole">-</div>
+      <div class="tip">设置与分析控制台已移至主页面</div>
+      <div class="logout" id="btnLogout">↪ 退出登录</div>
+    </div>
   </div>
 </div>
 
 <script>
-/* ---- 极简 Streamlit 组件桥(无外部依赖) ---- */
+/* ---- 极简 Streamlit 组件桥 ---- */
 window.addEventListener("message", function (ev) {
   var d = ev.data || {};
   if (d.type === "streamlit:render") { onRender(d.args || {}); }
@@ -77,7 +101,7 @@ window.parent.postMessage({ type: "streamlit:setComponentReady" }, "*");
 function setFrameHeight(h) { window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*"); }
 function send(v) { window.parent.postMessage({ type: "streamlit:setComponentValue", value: v }, "*"); }
 
-/* ---- 渲染:应用 Python 传入的参数 ---- */
+/* ---- 渲染参数 ---- */
 function onRender(a) {
   var s = document.documentElement.style;
   s.setProperty("--fg", a.fg || "#e8edf6");
@@ -86,19 +110,27 @@ function onRender(a) {
   s.setProperty("--purple", a.purple || "#b45cff");
   s.setProperty("--card", a.card || "rgba(16,22,36,.72)");
   s.setProperty("--danger", a.danger || "#ff5b4d");
+  s.setProperty("--ok", a.ok || "#2eb872");
+  var bk = document.getElementById("bkDot");
+  var bkOk = !!a.backend_ok;
+  bk.style.background = bkOk ? "#2eb872" : "#ff5b4d";
+  bk.style.boxShadow = "0 0 8px " + (bkOk ? "#2eb872" : "#ff5b4d");
+  document.getElementById("bkText").textContent = bkOk ? "后端在线" : "后端离线";
   var dot = document.getElementById("srcDot");
   dot.style.background = a.srcColor || "#8792a8";
-  dot.style.boxShadow = "0 0 8px " + (a.srcColor || "#8792a8");
+  dot.style.color = a.srcColor || "#8792a8";
   document.getElementById("srcText").textContent = a.srcText || "—";
   document.getElementById("avatar").textContent = a.initial || "?";
-  var drop = document.getElementById("drop");
-  drop.innerHTML = '<div class="nm">👤 ' + (a.username || "-") + '</div>' +
-                   '<div class="rl">' + (a.role_txt || "") + "</div>" +
-                   '<div class="tip">退出请用侧边栏「🚪 退出登录」</div>';
+  document.getElementById("uName").textContent = a.username || "-";
+  document.getElementById("uRole").textContent = a.role_txt || "";
   var bell = document.getElementById("bell");
   if (a.bell) { bell.innerHTML = "🔔<i class='badge'>1</i>"; bell.className = "tb-bell shake"; }
   else { bell.textContent = "🔔"; bell.className = "tb-bell"; }
-  setFrameHeight(52);
+  var th = document.getElementById("btnTheme");
+  th.textContent = (a.theme === "dark") ? "🌙" : "☀️";
+  var cy = document.getElementById("btnCyber");
+  cy.className = "ibtn" + (a.cyberpunk ? " on" : "");
+  setFrameHeight(48);
 }
 
 /* ---- 时钟 ---- */
@@ -113,17 +145,21 @@ function onRender(a) {
   setTimeout(tick, 1000);
 })();
 
-/* ---- 搜索触发:🔍 按钮 + Ctrl/Cmd+K ---- */
+/* ---- 交互事件 ---- */
 function heatmap() { try { return JSON.parse(localStorage.getItem("kb_heat") || "{}"); } catch (e) { return {}; } }
-function track(k) {
-  try {
-    var m = heatmap();
-    m[k] = (m[k] || 0) + 1;
-    localStorage.setItem("kb_heat", JSON.stringify(m));
-  } catch (e) {}
-}
+function track(k) { try { var m = heatmap(); m[k] = (m[k] || 0) + 1; localStorage.setItem("kb_heat", JSON.stringify(m)); } catch (e) {} }
+
 document.getElementById("tbsearch").addEventListener("click", function () {
   send({ action: "open_search", heatmap: heatmap() });
+});
+document.getElementById("btnTheme").addEventListener("click", function () {
+  send({ action: "toggle_theme" });
+});
+document.getElementById("btnCyber").addEventListener("click", function () {
+  send({ action: "toggle_cyberpunk" });
+});
+document.getElementById("btnLogout").addEventListener("click", function () {
+  send({ action: "logout" });
 });
 document.addEventListener("keydown", function (e) {
   track(e.key);

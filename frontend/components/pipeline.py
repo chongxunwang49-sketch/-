@@ -62,14 +62,16 @@ def render_pipeline(stages: list[dict], overall_status: str, pal: dict):
 
 
 def data_source_light_html(source: str, pal: dict) -> str:
-    """数据源状态指示灯"""
+    """数据源状态指示灯(v4.1:带雷达扫描环)"""
     text, color_key, desc = SOURCE_META.get(source, (source, "muted", ""))
     color = pal[color_key]
     return f"""
     <div class="tc-card" style="padding:8px 12px;">
       <div style="display:flex;align-items:center;gap:8px;">
-        <span style="width:10px;height:10px;border-radius:50%;background:{color};
-                     box-shadow:0 0 8px {color};display:inline-block;"></span>
+        <span class="tc-radar" style="color:{color};display:inline-block;width:12px;height:12px;">
+          <span style="position:absolute;inset:0;width:10px;height:10px;border-radius:50%;background:{color};
+                       box-shadow:0 0 8px {color};display:inline-block;"></span>
+        </span>
         <span style="font-size:13px;font-weight:600;color:{pal['fg']};">{text}</span>
       </div>
       <div style="font-size:11px;color:{pal['muted']};margin-left:18px;">{desc}</div>

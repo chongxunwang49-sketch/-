@@ -135,11 +135,86 @@ def _svg_steps(cid: str) -> str:
 </svg>"""
 
 
+def _svg_markets(cid: str) -> str:
+    """图5 多市场覆盖:A股/港股/美股 + 三级数据降级"""
+    markets = [("A 股", "6/0/3 开头", "#4f8cff"), ("港股", "5 位数字", "#b45cff"), ("美股", "字母代码", "#2eb872")]
+    parts = []
+    for i, (t, s, c) in enumerate(markets):
+        x = 30 + i * 150
+        parts.append(f"""
+        <rect x="{x}" y="50" width="120" height="150" rx="14" fill="rgba(20,26,38,.5)"
+              stroke="{c}" stroke-width="1.3" filter="url(#glow-{cid})"/>
+        <text x="{x+60}" y="90" fill="#e8edf6" font-size="18" font-weight="800" text-anchor="middle">{t}</text>
+        <text x="{x+60}" y="120" fill="#9fb0d8" font-size="12" text-anchor="middle">{s}</text>
+        <text x="{x+60}" y="170" fill="{c}" font-size="24" text-anchor="middle">📈</text>""")
+    # 三级降级条
+    parts.append(f"""
+    <rect x="60" y="228" width="360" height="52" rx="12" fill="url(#gx-{cid}-soft)" stroke="url(#gx-{cid})" stroke-width="1.3"/>
+    <text x="82" y="262" fill="#e8edf6" font-size="14" font-weight="600">三级降级:AKShare → 新浪 → Mock</text>""")
+    return f"""<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+{_defs(cid)}
+{''.join(parts)}
+</svg>"""
+
+
+def _svg_agents9(cid: str) -> str:
+    """图6 九大 Agent 矩阵:并行分析矩阵格"""
+    grid = [
+        ("技术", 0), ("情感", 1), ("基本面", 2), ("估值", 3),
+        ("资金流", 4), ("行业", 5), ("事件", 6), ("风险", 7), ("报告", 8),
+    ]
+    parts = []
+    for i, (t, g) in enumerate(grid):
+        col, row = g % 3, g // 3
+        x = 46 + col * 132
+        y = 36 + row * 92
+        color = FISH9[i % len(FISH9)]
+        parts.append(f"""
+        <rect x="{x}" y="{y}" width="112" height="58" rx="12" fill="url(#gx-{cid}-soft)"
+              stroke="{color}" stroke-width="1.2"/>
+        <text x="{x+56}" y="{y+28}" fill="#e8edf6" font-size="15" font-weight="700" text-anchor="middle">{t}</text>
+        <text x="{x+56}" y="{y+46}" fill="#9fb0d8" font-size="11" text-anchor="middle">Agent</text>""")
+    # 并行标记
+    parts.append(f"""<text x="240" y="310" fill="#9fb0d8" font-size="12" text-anchor="middle">LangGraph 状态机 · 并行 fan-out · 30s 超时熔断</text>""")
+    return f"""<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+{_defs(cid)}
+{''.join(parts)}
+</svg>"""
+
+
+def _svg_security(cid: str) -> str:
+    """图7 安全与工程化:JWT/加密/日志/Docker 一站式"""
+    items = [
+        (60, "🔐 JWT 认证", "HS256 + bcrypt 加密"),
+        (190, "📦 Docker 一键", "6 服务 Compose 编排"),
+        (320, "🧾 结构化日志", "Token/耗时/降级全记录"),
+    ]
+    parts = []
+    for x, t, s in items:
+        parts.append(f"""
+        <rect x="{x}" y="70" width="150" height="180" rx="14" fill="rgba(20,26,38,.5)"
+              stroke="url(#gx-{cid})" stroke-width="1.3" filter="url(#glow-{cid})"/>
+        <text x="{x+75}" y="120" fill="#fff" font-size="30" text-anchor="middle" filter="url(#glow-{cid})">{t[:2]}</text>
+        <text x="{x+75}" y="170" fill="#e8edf6" font-size="14" font-weight="700" text-anchor="middle">{t[3:]}</text>
+        <text x="{x+75}" y="196" fill="#9fb0d8" font-size="11" text-anchor="middle">{s}</text>""")
+    return f"""<svg viewBox="0 0 480 320" xmlns="http://www.w3.org/2000/svg" width="100%" height="100%">
+{_defs(cid)}
+{''.join(parts)}
+</svg>"""
+
+
+FISH9 = ["#4f8cff", "#b45cff", "#f0b90b", "#2eb872", "#e040fb",
+         "#ff7043", "#26c6da", "#7c4dff", "#ff5b4d"]
+
+
 SLIDES = [
     {"title": "系统架构", "slogan": "数据采集 → 多智能体矩阵 → RAG 知识库", "svg": _svg_arch("s1")},
     {"title": "功能优势", "slogan": "实时行情 · 智能问答 · 深度报告", "svg": _svg_feats("s2")},
     {"title": "多智能体协同", "slogan": "让每一份数据,都有 AI 的深度洞察", "svg": _svg_agents("s3")},
     {"title": "使用说明", "slogan": "输入代码 → 智能分析 → 获得报告", "svg": _svg_steps("s4")},
+    {"title": "多市场覆盖", "slogan": "A股 · 港股 · 美股 + 三级数据降级", "svg": _svg_markets("s5")},
+    {"title": "九大 Agent", "slogan": "技术/情感/基本面/估值/资金/行业/事件/风险/报告", "svg": _svg_agents9("s6")},
+    {"title": "安全与工程化", "slogan": "JWT 认证 · Docker 一键 · 结构化日志", "svg": _svg_security("s7")},
 ]
 
 

@@ -49,15 +49,17 @@ def _auth_css(pal: dict) -> str:
         animation: auth-twinkle 3s ease-in-out infinite;
     }}
     @keyframes auth-twinkle {{ 0%,100% {{ opacity: .12 }} 50% {{ opacity: .9 }} }}
-    /* 右侧登录卡:玻璃态(毛玻璃 + 霓虹描边) */
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) [data-testid="stVerticalBlock"] {{
+    /* 右侧登录卡:玻璃态(毛玻璃 + 霓虹描边)。
+       用 > 直取第二列的 vertical block,避免误匹配卡内嵌套列导致穿模 */
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) > [data-testid="stVerticalBlock"] {{
         background: rgba(15, 21, 34, .72);
         border: 1px solid rgba(79, 140, 255, .28);
         border-radius: 18px;
-        padding: 28px 26px 22px; margin-top: 4vh;
+        padding: 26px 26px 20px;
         box-shadow: 0 24px 80px rgba(0,0,0,.55), 0 0 28px rgba(124,92,255,.16), inset 0 1px 0 rgba(255,255,255,.06);
         backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
         position: relative; z-index: 2;
+        align-self: stretch;
     }}
     .auth-logo {{ text-align: center; font-size: 34px;
         filter: drop-shadow(0 0 14px rgba(124,92,255,.6)); }}
@@ -77,17 +79,17 @@ def _auth_css(pal: dict) -> str:
     }}
     @keyframes auth-flow {{ 0% {{ background-position: -200% 0; }} 100% {{ background-position: 200% 0; }} }}
     [data-testid="stTextInput"]:focus-within::after {{ background-size: 200% 100%; }}
-    /* 登录按钮流光 + 按压弹性 */
-    .auth-btn button {{
+    /* 登录/注册按钮:流光 + 按压弹性 + 脉冲(streamlit 的 form_submit_button 渲染为此 testid) */
+    [data-testid="stFormSubmitButton"] button {{
         position: relative; overflow: hidden;
         background: linear-gradient(120deg, {pal['accent']}, {pal.get('purple', '#b45cff')}) !important;
         border: none !important;
         transition: transform .25s cubic-bezier(0.34,1.56,0.64,1), box-shadow .25s !important;
     }}
-    .auth-btn button:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124,92,255,.5) !important; }}
-    .auth-btn button:active {{ transform: scale(.95); }}
+    [data-testid="stFormSubmitButton"] button:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124,92,255,.5) !important; }}
+    [data-testid="stFormSubmitButton"] button:active {{ transform: scale(.95); }}
     @keyframes auth-pulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(124,92,255,.55); }} 70% {{ box-shadow: 0 0 0 10px rgba(124,92,255,0); }} }}
-    .auth-btn button {{ animation: auth-pulse 1.8s infinite; }}
+    [data-testid="stFormSubmitButton"] button {{ animation: auth-pulse 1.8s infinite; }}
     /* 显示密码 / 快捷登录等小按钮 */
     .stCheckbox label {{ color: {pal['muted']} !important; font-size: 12px !important; }}
     </style>

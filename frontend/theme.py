@@ -119,6 +119,99 @@ def apply_theme(theme_name: str) -> dict:
     [data-testid="stSidebar"] .tc-card {{ background: {card_rgb}; }}
     """
 
+    # v4.1 游戏化 HUD:扫描线(全局固定,轻微)
+    scan_css = """
+    @keyframes tc-scan { 0% { transform: translateY(-6vh); } 100% { transform: translateY(106vh); } }
+    .tc-scanline { position: fixed; left:0; right:0; top:0; height:2px; z-index:998; pointer-events:none;
+        background: linear-gradient(90deg, transparent, rgba(79,140,255,.14), transparent);
+        animation: tc-scan 9s linear infinite; }"""
+
+    # v4.1 游戏化 HUD:四角括号卡 / 雷达 / 导航图块 / 控制台 / 按钮粒子迸发
+    hud_css = f"""
+    /* ---- v4.1 游戏化 HUD ---- */
+    /* 按钮点击:粒子迸发(科技感) */
+    .stButton button::before, .stFormSubmitButton button::before {{
+        content:""; position:absolute; inset:0; pointer-events:none; z-index:2;
+        background:
+            radial-gradient(circle at 25% 30%, rgba(255,255,255,.95) 0 1.5px, transparent 2.5px),
+            radial-gradient(circle at 68% 42%, rgba(180,92,255,.95) 0 1.5px, transparent 2.5px),
+            radial-gradient(circle at 44% 82%, rgba(79,140,255,.95) 0 1.5px, transparent 2.5px),
+            radial-gradient(circle at 88% 18%, rgba(255,255,255,.8) 0 1.5px, transparent 2.5px),
+            radial-gradient(circle at 12% 68%, rgba(224,64,251,.9) 0 1.5px, transparent 2.5px),
+            radial-gradient(circle at 56% 10%, rgba(79,140,255,.9) 0 1.5px, transparent 2.5px);
+        opacity:0; transform:scale(.3);
+    }}
+    .stButton button:active::before, .stFormSubmitButton button:active::before {{
+        animation: tc-spark .5s {ELASTIC};
+    }}
+    @keyframes tc-spark {{
+        0% {{ opacity:1; transform: scale(.3) rotate(0deg); }}
+        100% {{ opacity:0; transform: scale(1.8) rotate(45deg); }}
+    }}
+
+    /* 四角括号 HUD 卡 */
+    .tc-hud {{ position:relative; }}
+    .tc-hud::before, .tc-hud::after {{
+        content:""; position:absolute; width:16px; height:16px; pointer-events:none;
+        border-color:{_rgba(acc,.85)}; border-style:solid; opacity:.9; z-index:5;
+    }}
+    .tc-hud::before {{ top:5px; left:5px; border-width:2px 0 0 2px; }}
+    .tc-hud::after {{ bottom:5px; right:5px; border-width:0 2px 2px 0; }}
+
+    /* 数据源雷达环 */
+    @keyframes tc-radar {{
+        0% {{ transform: scale(.4); opacity:.85; }}
+        100% {{ transform: scale(1.8); opacity:0; }}
+    }}
+    .tc-radar {{ position:relative; display:inline-block; width:12px; height:12px; }}
+    .tc-radar::after {{
+        content:""; position:absolute; inset:0; border-radius:50%;
+        border:1px solid currentColor; animation:tc-radar 1.8s ease-out infinite;
+    }}
+
+    /* 侧边栏导航游戏图块 */
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] {{
+        display:flex; flex-direction:column; gap:6px;
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label {{
+        display:flex; align-items:center; width:100%;
+        background:{pal['card2']}; border:1px solid {border}; border-radius:11px;
+        padding:9px 12px; margin:0; cursor:pointer;
+        transition: all .28s {ELASTIC};
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:hover {{
+        transform: translateX(5px);
+        border-color: {_rgba(acc,.55)};
+        box-shadow: 0 4px 14px {_rgba(acc,.18)};
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {{
+        background: linear-gradient(120deg, {_rgba(acc,.20)}, {_rgba(purp,.14)});
+        border-color: {acc};
+        box-shadow: {glow};
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) div:nth-child(2) {{
+        color: {pal['fg']}; font-weight: 700;
+    }}
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label div:first-child {{ display:none; }}
+
+    /* 分析控制台(st.expander 玻璃面板) */
+    [data-testid="stExpander"] details {{
+        background: linear-gradient(120deg, {_rgba(acc,.05)}, {_rgba(purp,.06)}) , {card_rgb};
+        border: 1px solid {_rgba(acc,.28)}; border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.04);
+    }}
+    [data-testid="stExpander"] details summary {{
+        background: linear-gradient(90deg, {_rgba(acc,.12)}, {_rgba(purp,.08)});
+        border-radius: 16px; font-weight: 800; color:{pal['fg']};
+        transition: all .3s {ELASTIC};
+    }}
+    [data-testid="stExpander"] details summary:hover {{ background: linear-gradient(90deg, {_rgba(acc,.2)}, {_rgba(purp,.14)}); }}
+    @keyframes tc-console-in {{ from {{ opacity:0; transform:translateY(-8px); }} to {{ opacity:1; transform:translateY(0); }} }}
+    [data-testid="stExpander"] details[aria-expanded="true"] > div {{ animation: tc-console-in .3s {ELASTIC}; }}
+
+    {scan_css}
+    """
+
     # 赛博朋克模式追加(霓虹字 + 故障线 + 点阵背景)
     cyber_css = ""
     if cyber:
@@ -308,13 +401,15 @@ def apply_theme(theme_name: str) -> dict:
     .tc-liquid .wave {{ position: absolute; left: 0; right: 0; bottom: 0; height: 200%; }}
     .tc-liquid .wave svg {{ display: block; width: 200%; height: 100%; animation: tc-wave-x 7s linear infinite, tc-wave-y 5s ease-in-out infinite; }}
 
+    {hud_css}
     {surface_css}
     {cyber_css}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
-    # 赛博朋克故障干扰线(纯视觉覆盖层)
+    # v4.1 扫描线 + 赛博朋克故障干扰线(纯视觉覆盖层)
+    st.markdown('<div class="tc-scanline"></div>', unsafe_allow_html=True)
     if cyber:
         st.markdown('<div class="cp-glitch"></div><div class="cp-glitch" style="top:38%;"></div>'
                     '<div class="cp-glitch" style="top:72%;animation-delay:1.3s;"></div>',

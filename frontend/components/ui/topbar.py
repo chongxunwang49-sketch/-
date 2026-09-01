@@ -1,12 +1,13 @@
 """
-顶部状态栏组件(v4.0 步骤3:「太空舱式仪表盘」,declare_component 双向)
+顶部状态栏组件(v4.0/4.1,declare_component 双向)
 
-- 左: 🔍 搜索触发(Ctrl+K)+ 实时时钟(秒跳动冒号 + 日期)
-- 右: 数据源状态指示灯(主源/备用/模拟,脉冲光晕) · 通知铃铛(未读抖动)
--     用户头像(悬停弹出个人中心下拉卡)
-- 事件: 点击搜索 / Ctrl+K -> 返回 {action:"open_search", heatmap:{...}}(由 app.py 消费)
+顶部 HUD(游戏化):
+- 左: 🔍 全局搜索(Ctrl+K) + 实时时钟(秒跳动冒号 + 日期)
+- 右: 后端状态灯 · 数据源雷达环+文案 · 主题切换(🌙/☀️) · 赛博朋克开关(⚡)
+-     通知铃铛(未读抖动) · 用户头像(悬停下拉: 信息 + 退出登录)
 
-承载: declare_component(自定义组件,iframe height=52),JS->Python 双向桥。
+事件(由 app.py 消费并做 _handled 防重):
+  open_search / toggle_theme / toggle_cyberpunk / logout
 """
 from __future__ import annotations
 
@@ -23,12 +24,10 @@ _COMP = components.declare_component(
 )
 
 
-def render_topbar(pal: dict, username: str, role: str,
-                  data_source: str, bell_new: bool = False) -> dict | None:
-    """渲染顶部状态栏并返回事件(open_search 等);无事件返回 None。
-
-    调用方(app.py)需对返回事件做 _handled 防重处理。
-    """
+def render_topbar(pal: dict, username: str, role: str, data_source: str,
+                  backend_ok: bool = True, theme: str = "dark",
+                  cyberpunk: bool = False, bell_new: bool = False) -> dict | None:
+    """渲染顶部状态栏并返回事件;无事件返回 None。"""
     src_text, src_key, _ = SOURCE_META.get(data_source, (data_source, "muted", ""))
     src_color = pal.get(src_key, pal["muted"])
     args = dict(
@@ -37,11 +36,15 @@ def render_topbar(pal: dict, username: str, role: str,
         role_txt="👑 管理员" if role == "admin" else "👤 普通用户",
         src_text=src_text,
         src_color=src_color,
+        backend_ok=bool(backend_ok),
+        theme=theme,
+        cyberpunk=bool(cyberpunk),
         bell=bool(bell_new),
         fg=pal["fg"],
         muted=pal["muted"],
         accent=pal["accent"],
         purple=pal.get("purple", "#b45cff"),
+        ok=pal["ok"],
         danger=pal["danger"],
         card="rgba(16,22,36,.72)",
     )
