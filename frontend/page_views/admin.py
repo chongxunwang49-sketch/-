@@ -12,8 +12,13 @@ import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
-from api_client import (ApiError, admin_data_refresh, admin_delete_user,
-                        admin_stats, admin_update_user, admin_users)
+import time
+
+import pandas as pd
+
+from api_client import (ApiError, admin_collect_status, admin_data,
+                        admin_data_refresh, admin_delete_user, admin_stats,
+                        admin_update_user, admin_users)
 from components.ui import wow
 
 
@@ -71,17 +76,73 @@ def render(pal: dict):
 
     st.markdown("---")
 
-    # ---- 数据源管理 ----
-    st.markdown("#### 🛠 数据源管理")
+    # ---- 爬虫数据集(采集进度 + 列表窗口) ----
+    st.markdown("#### 🕷 爬虫数据集")
     c1, c2 = st.columns([2, 1])
-    c1.markdown(f"调度器状态:`{stats.get('scheduler', '-')}` (每日 08:30 + 每 6 小时自动采集自选股行情/新闻)")
-    if c2.button("🔄 立即采集数据", use_container_width=True):
+    c1.markdown(f"调度器:`{stats.get('scheduler', '-')}` (每日 08:30 + 每 6 小时自动采集) · 手动采集走后台线程,实时显示进度")
+    if c2.button("🔄 立即采集", use_container_width=True):
         try:
             resp = admin_data_refresh(token)
-            st.toast(f"采集完成,刷新 {resp.get('stocks_refreshed', 0)} 只股票", icon="✅")
-            st.rerun()
+            if resp.get("ok"):
+                st.session_state["collect_running"] = True
+                st.rerun()
+            else:
+                st.toast(resp.get("message", "采集已在进行中"), icon="⏳")
         except ApiError as e:
-            st.error(f"采集失败: {e}")
+            st.error(f"启动采集失败: {e}")
+
+    # 采集进度条(轮询 /admin/collect/status)
+    if st.session_state.get("collect_running"):
+        try:
+            cp = admin_collect_status(token)
+        except ApiError:
+            cp = {}
+        running = bool(cp.get("running"))
+        total = max(1, int(cp.get("total") or 1))
+        cur = int(cp.get("current") or 0)
+        pct = min(100, int(cur / total * 100))
+        msg = cp.get("message") or "采集进行中"
+        st.markdown(f"""
+        <div class="prog-wrap tc-card" style="padding:10px 16px;">
+          <div class="prog-head"><span>🕷 爬虫采集 · {msg}</span><b style="color:{pal['accent']};">{pct}%</b></div>
+          <div class="prog-bar"><div class="prog-fill" style="width:{pct}%"></div></div>
+        </div>""", unsafe_allow_html=True)
+        if running:
+            time.sleep(1.5)
+            st.rerun()
+        else:
+            st.session_state["collect_running"] = False
+            st.toast(f"✅ 采集完成: {msg}", icon="🎉")
+
+    # 数据集列表窗口
+    try:
+        ds = admin_data(token, limit=30)
+    except ApiError as e:
+        st.warning(f"数据集加载失败: {e}")
+        ds = {"prices": [], "news": [], "total_prices": 0, "total_news": 0}
+    st.markdown(f"**数据集总量**: 行情 `{ds.get('total_prices', 0)}` 行 · 新闻 `{ds.get('total_news', 0)}` 条(下表显示最近 30)")
+    tab_p, tab_n = st.tabs(["📈 行情数据", "📰 新闻数据"])
+    with tab_p:
+        prices = ds.get("prices") or []
+        if prices:
+            df_p = pd.DataFrame([{
+                "代码": p["stock_code"], "日期": p["date"],
+                "开": p["open"], "高": p["high"], "低": p["low"],
+                "收": p["close"], "量": p["volume"],
+            } for p in prices])
+            st.dataframe(df_p, use_container_width=True, hide_index=True)
+        else:
+            st.info("暂无行情数据,点击上方「立即采集」触发爬虫。")
+    with tab_n:
+        news = ds.get("news") or []
+        if news:
+            df_n = pd.DataFrame([{
+                "代码": n["stock_code"], "时间": n["publish_time"],
+                "标题": n["title"], "来源": n["source"],
+            } for n in news])
+            st.dataframe(df_n, use_container_width=True, hide_index=True)
+        else:
+            st.info("暂无新闻数据,点击上方「立即采集」触发爬虫。")
 
     st.markdown("---")
 

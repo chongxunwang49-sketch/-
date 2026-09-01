@@ -222,7 +222,9 @@ def _render_search(pal):
             _start(code)
 
 
-_render_console(pal)
+# 分析控制台仅驾驶舱板块展示(v4.2:其它板块界面干净,功能清晰)
+if st.session_state.get("page", "dashboard") == "dashboard":
+    _render_console(pal)
 
 if st.session_state.get("search_open"):
     _render_search(pal)

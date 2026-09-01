@@ -1,11 +1,9 @@
 """
-智能问答页(v4.0 步骤6)「股小智」
+智能问答页(v4.2 干净布局)「股小智」
 
-- 聊天界面:非对称气泡(用户右·蓝色玻璃 / AI 左·暗色玻璃+全息头环)
-- AI 回复打字机效果:最新一条 AI 消息逐字打印(一次性标志防重播,刷新后直出)
+- 左:对话窗口(非对称气泡 + 打字机 + 引用来源)
+- 右:会话目录(历史对话列表,点击切换)+ 深度研究 + 扩充知识库(收进侧栏)
 - 回答展示 RAG 引用来源
-- "深度研究":识别对话中的股票代码,一键转多 Agent 分析;运行期间由 app.py
-  轮询分支展示拓扑图 + 画中画进度卡
 """
 from __future__ import annotations
 
@@ -15,7 +13,8 @@ import re
 import streamlit as st
 import streamlit.components.v1 as components
 
-from api_client import ApiError, chat, chat_history, start_analysis, upload_doc
+from api_client import (ApiError, chat, chat_history, chat_sessions,
+                        start_analysis, upload_doc)
 from components.ui import wow
 from stock_map import lookup_name
 
@@ -24,14 +23,13 @@ def _ensure_session() -> str:
     if "chat_session" not in st.session_state:
         st.session_state["chat_session"] = "sess_default"
     if "chat_messages" not in st.session_state:
-        st.session_state["chat_messages"] = []   # [{role, content, sources}]
+        st.session_state["chat_messages"] = []
     if "_typed" not in st.session_state:
         st.session_state["_typed"] = []
     return st.session_state["chat_session"]
 
 
 def _load_history(token: str):
-    """从后端拉取当前会话历史(仅首次)"""
     if st.session_state.get("_chat_loaded"):
         return
     try:
@@ -60,7 +58,6 @@ def _send_message(token: str, message: str):
 
 
 def _detect_stock_code() -> str | None:
-    """从最近对话里找 A股 6 位代码"""
     for m in reversed(st.session_state.get("chat_messages", [])):
         hits = re.findall(r"\b(6\d{5}|0\d{5}|3\d{5})\b", m.get("content", ""))
         if hits:
@@ -108,7 +105,6 @@ def _sources_html(pal: dict, sources: list) -> str:
 def _render_messages(pal: dict):
     msgs = st.session_state.get("chat_messages", [])
     typed = st.session_state.get("_typed", [])
-    # 最新一条 assistant 消息下标
     last_ai = None
     for i in range(len(msgs) - 1, -1, -1):
         if msgs[i]["role"] == "assistant":
@@ -120,7 +116,6 @@ def _render_messages(pal: dict):
             st.markdown(_user_bubble(pal, m["content"]), unsafe_allow_html=True)
         else:
             if i == last_ai and i not in typed:
-                # 打字机:渲染组件并立即写入一次性标志(防重播)
                 st.session_state["_typed"] = typed + [i]
                 est_h = min(420, 42 + max(1, math.ceil(len(m["content"]) / 36)) * 26)
                 components.html(wow.typewriter_html(m["content"], height=est_h), height=est_h)
@@ -130,46 +125,46 @@ def _render_messages(pal: dict):
                 st.markdown(_sources_html(pal, m.get("sources") or []), unsafe_allow_html=True)
 
 
-def render(pal: dict):
-    token = st.session_state.token
-    session_id = _ensure_session()
-
-    st.markdown(f'<div class="tc-enter" style="font-size:18px;font-weight:800;color:{pal["fg"]};">🤖 股小智 · RAG 智能问答</div>',
-                unsafe_allow_html=True)
-    st.caption("基于财报知识库(ChromaDB + bge)检索增强,回答引用知识库来源;支持多轮追问。")
-    _load_history(token)
-
-    # 会话操作
-    c1, c2 = st.columns([3, 1])
-    with c2:
-        if st.button("🔄 新会话", use_container_width=True):
-            st.session_state["chat_session"] = "sess_" + str(len(st.session_state.get("chat_messages", [])))[-6:]
-            st.session_state["chat_messages"] = []
-            st.session_state["_typed"] = []
-            st.session_state["_chat_loaded"] = False
-            st.rerun()
-
-    # 消息渲染(非对称气泡 + 打字机)
-    _render_messages(pal)
-
-    # 输入
-    user_input = st.chat_input("输入问题,如:茅台2024年营收增速是多少?")
-    if user_input:
-        _send_message(token, user_input)
+def _render_history_sidebar(pal: dict, token: str):
+    st.markdown(f'<div class="tc-label">💬 会话目录</div>', unsafe_allow_html=True)
+    if st.button("🆕 新会话", use_container_width=True):
+        st.session_state["chat_session"] = "sess_" + str(len(st.session_state.get("chat_messages", [])))[-6:]
+        st.session_state["chat_messages"] = []
+        st.session_state["_typed"] = []
+        st.session_state["_chat_loaded"] = False
         st.rerun()
 
+    try:
+        data = chat_sessions(token) or {"items": []}
+    except ApiError:
+        data = {"items": []}
+    sess_items = data.get("items") or []
+    if sess_items:
+        for sess in sess_items:
+            sid = sess["session_id"]
+            cur = sid == st.session_state["chat_session"]
+            label = f"{'● ' if cur else ''}{sid[:12]} · {sess['count']}条"
+            if st.button(label, key=f"sess_{sid}", use_container_width=True):
+                st.session_state["chat_session"] = sid
+                st.session_state["chat_messages"] = []
+                st.session_state["_typed"] = []
+                st.session_state["_chat_loaded"] = False
+                st.rerun()
+        st.caption(f"共 {len(sess_items)} 个会话,点击切换")
+    else:
+        st.caption("暂无历史会话,发送第一条消息后自动创建。")
+
+    # 深度研究 + 扩充知识库(收进侧栏,保持主区干净)
     st.markdown("---")
-    # 深度研究
     code = _detect_stock_code() or st.session_state.code
-    name = lookup_name(code)
-    if st.button(f"🧠 深度研究 {name}({code}):将对话转为多 Agent 分析", use_container_width=True):
+    if st.button(f"🧠 深度研究 {lookup_name(code)}({code})", use_container_width=True):
         try:
             resp = start_analysis(code, "full", token=token)
             st.session_state.running_task = resp["task_id"]
             st.session_state.code = code
             st.session_state["page"] = "deep"
             st.session_state.analysis_result = None
-            st.toast(f"已启动 {name} 深度分析", icon="🧠")
+            st.toast(f"已启动 {lookup_name(code)} 深度分析", icon="🧠")
             st.rerun()
         except ApiError as e:
             if e.status_code == 401:
@@ -178,9 +173,8 @@ def render(pal: dict):
                 st.rerun()
             st.toast(f"启动失败: {e}", icon="❌")
 
-    # 知识库扩充(上传文档)
-    with st.expander("📤 扩充知识库(上传 PDF/TXT)"):
-        up = st.file_uploader("上传财报/公告/研报文档", type=["pdf", "txt"])
+    with st.expander("📤 扩充知识库", expanded=False):
+        up = st.file_uploader("上传财报/公告/研报(PDF/TXT)", type=["pdf", "txt"])
         if up and st.button("入库", key="qa_upload"):
             try:
                 resp = upload_doc(up.getvalue(), up.name, token)
@@ -189,6 +183,28 @@ def render(pal: dict):
                 st.rerun()
             except ApiError as e:
                 st.error(f"上传失败: {e}")
+
+
+def render(pal: dict):
+    token = st.session_state.token
+    _ensure_session()
+
+    st.markdown(f'<div class="tc-enter" style="font-size:18px;font-weight:800;color:{pal["fg"]};">🤖 股小智 · RAG 智能问答</div>',
+                unsafe_allow_html=True)
+    st.caption("基于财报知识库(ChromaDB + bge)检索增强,回答引用来源;支持多轮追问。")
+    _load_history(token)
+
+    chat_col, hist_col = st.columns([2.6, 1.1], gap="medium")
+    with chat_col:
+        # 对话窗口
+        _render_messages(pal)
+        user_input = st.chat_input("输入问题,如:茅台2024年营收增速是多少?")
+        if user_input:
+            _send_message(token, user_input)
+            st.rerun()
+
+    with hist_col:
+        _render_history_sidebar(pal, token)
 
 
 def _rgba(hex_color: str, alpha: float) -> str:

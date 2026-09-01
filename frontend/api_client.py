@@ -158,6 +158,11 @@ def chat_history(session_id: str, token: str) -> dict:
     return _request("GET", "/chat/history", params={"session_id": session_id}, token=token)
 
 
+def chat_sessions(token: str) -> dict:
+    """当前用户历史会话目录(股小智侧栏)"""
+    return _request("GET", "/chat/sessions", token=token)
+
+
 def upload_doc(file_bytes: bytes, filename: str, token: str) -> dict:
     try:
         resp = requests.post(
@@ -198,3 +203,13 @@ def admin_stats(token: str) -> dict:
 
 def admin_data_refresh(token: str) -> dict:
     return _request("POST", "/admin/data/refresh", token=token, timeout=120)
+
+
+def admin_collect_status(token: str) -> dict:
+    """爬虫进度(管理后台轮询)"""
+    return _request("GET", "/admin/collect/status", token=token, timeout=10)
+
+
+def admin_data(token: str, limit: int = 50) -> dict:
+    """爬虫数据集列表(行情 + 新闻)"""
+    return _request("GET", "/admin/data", params={"limit": limit}, token=token)

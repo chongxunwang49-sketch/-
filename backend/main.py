@@ -32,7 +32,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import delete, func, select
 
 from .graph.workflow import _load_latest_quotes, build_workflow
-from .models import StockPrice, User, Watchlist, engine
+from .models import ChatHistory, StockPrice, User, Watchlist, engine
 from .models import SessionLocal
 from .services import history_service, stock_meta
 from .services import qa as qa_service
@@ -498,6 +498,25 @@ def chat_history(session_id: str, user: User = Depends(get_current_user)):
     return {"items": qa_service.list_history(user.id, session_id)}
 
 
+@app.get("/chat/sessions")
+def chat_sessions(user: User = Depends(get_current_user)):
+    """当前用户的历史会话目录(按最近对话倒序),供股小智侧栏展示"""
+    from sqlalchemy import func, select
+    with SessionLocal() as session:
+        rows = session.execute(
+            select(ChatHistory.session_id, func.count(ChatHistory.id),
+                   func.max(ChatHistory.created_at))
+            .where(ChatHistory.user_id == user.id)
+            .group_by(ChatHistory.session_id)
+            .order_by(func.max(ChatHistory.created_at).desc())
+        ).all()
+    return {"items": [
+        {"session_id": sid, "count": c,
+         "last_at": str(ts)[:16] if ts else None}
+        for sid, c, ts in rows
+    ]}
+
+
 @app.post("/chat/upload")
 async def chat_upload(file: UploadFile = File(...), user: User = Depends(get_current_user)):
     """上传 PDF/TXT 扩充知识库(第五批);入库带超时熔断,避免 embedding 服务不可用时挂死"""
@@ -615,11 +634,50 @@ def admin_stats(_: User = Depends(get_admin_user)):
 
 @app.post("/admin/data/refresh")
 def admin_data_refresh(_: User = Depends(get_admin_user)):
-    """手动触发数据采集(自选股行情+新闻)"""
-    from .services.scheduler import _collect_watchlist_stocks
+    """手动触发数据采集(后台线程执行,前端轮询 /admin/collect/status 看进度)"""
+    import threading
+    from .services.scheduler import COLLECT_PROGRESS, _collect_watchlist_stocks
     _INDEX_CACHE.update({"ts": 0.0, "data": None})  # 清除指数缓存
-    n = _collect_watchlist_stocks()
-    return {"ok": True, "stocks_refreshed": n}
+    if COLLECT_PROGRESS.get("running"):
+        return {"ok": False, "message": "采集正在进行中", "stocks_refreshed": 0}
+    threading.Thread(target=_collect_watchlist_stocks, daemon=True).start()
+    return {"ok": True, "message": "采集已启动", "stocks_refreshed": 0}
+
+
+@app.get("/admin/collect/status")
+def admin_collect_status(_: User = Depends(get_admin_user)):
+    """爬虫进度(管理后台轮询):{running,total,current,stock,message,updated_at}"""
+    from .services.scheduler import COLLECT_PROGRESS
+    return dict(COLLECT_PROGRESS)
+
+
+@app.get("/admin/data")
+def admin_data(limit: int = 50, _: User = Depends(get_admin_user)):
+    """爬虫数据集列表:最近行情 + 新闻(管理后台专用列表窗口)"""
+    from .models import NewsArticle, StockPrice
+    with SessionLocal() as session:
+        prices = (session.query(StockPrice)
+                  .order_by(StockPrice.date.desc(), StockPrice.stock_code)
+                  .limit(limit).all())
+        news = (session.query(NewsArticle)
+                .order_by(NewsArticle.publish_time.desc())
+                .limit(limit).all())
+        total_prices = session.query(StockPrice).count()
+        total_news = session.query(NewsArticle).count()
+    return {
+        "total_prices": total_prices,
+        "total_news": total_news,
+        "prices": [{
+            "id": p.id, "stock_code": p.stock_code, "date": str(p.date),
+            "open": p.open_price, "high": p.high_price,
+            "low": p.low_price, "close": p.close_price, "volume": p.volume,
+        } for p in prices],
+        "news": [{
+            "id": n.id, "stock_code": n.stock_code, "title": n.title,
+            "source": n.source,
+            "publish_time": str(n.publish_time)[:19] if n.publish_time else None,
+        } for n in news],
+    }
 
 
 # ------------------------------------------------------------
