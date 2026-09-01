@@ -1,16 +1,20 @@
 """
-专业级股票投研终端(第三批:导航壳 + 多页面)
+多智能体股票投研终端(v4.0 UI 全面改造)
 
 布局:
-  侧边栏  Logo / 后端状态 / 主题切换 / 用户信息+退出 / 导航菜单(行情看板|深度分析|自选股|历史记录)
-          / 分析控制面板(代码/时间范围/模式/数据源指示灯/重新分析)
-  主区    按导航路由到各页面;分析任务运行中全局显示流水线进度(任意页面可见)
+  顶部状态栏(时钟/数据源灯/搜索触发/头像下拉)  <- declare_component,可回传 open_search
+  侧边栏  Logo / 后端状态 / 主题+赛博朋克 / 用户信息+退出 / 导航(驾驶舱|深度研究|股小智|星标自选|历史轨迹|个人中心)
+          / 分析控制面板 / 数据源指示灯 / 键盘热力 / 免责声明
+  主区    全局搜索面板(Ctrl+K) -> 按导航路由到各页面;任务运行中全局流水线进度
 
 页面:
-  行情看板  市场指数行情条 + 自选股列表 + 热点占位
-  深度分析  行情概览卡 + 专业K线/指标卡片 + 5 Tab + 个股新闻
-  自选股    增删自选股
-  历史记录  按时间倒序 + 点击重新查看
+  驾驶舱  市场指数行情条(marquee) + 自选股 + 撒花彩蛋
+  深度研究 行情概览(计速器) + 专业K线/MA滑块 + Agent 拓扑 + 5 Tab + 新闻
+  股小智   RAG 问答(打字机/画中画进度卡)
+  星标自选 增删自选股
+  历史轨迹 按时间倒序 + 重新查看
+  个人中心 环形进度 + 资料编辑
+  管理后台 用户管理/监控/数据源(仅管理员)
 
 启动: streamlit run frontend/app.py
 """
@@ -21,25 +25,26 @@ from datetime import date, timedelta
 
 import streamlit as st
 
-# 保证本目录可被 import(直接 streamlit run 时 sys.path 已含本目录,再加一层保险)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from api_client import ApiError, health, start_analysis, task_result, task_status
-from components import pipeline
+from components import agent_topology, pipeline
+from components.ui import pip_card, topbar
 from data_layer import clear_all_cached
-from page_views import admin, dashboard, deep_analysis, history, qa, watchlist
+from page_views import admin, dashboard, deep_analysis, history, profile, qa, watchlist
 from stock_map import COMMON_STOCKS, lookup_name
 from theme import apply_theme
 
 st.set_page_config(page_title="多智能体股票投研终端", page_icon="📈", layout="wide")
 
-# 导航菜单: 显示文案 -> 页面 key(管理后台仅管理员可见)
+# 导航菜单(v4.0 文案):显示文案 -> 页面 key(管理后台仅管理员可见)
 NAV_MENU = {
-    "📊 行情看板": "dashboard",
-    "📈 深度分析": "deep",
-    "🤖 智能问答": "qa",
-    "⭐ 自选股": "watchlist",
-    "📋 历史记录": "history",
+    "📊 驾驶舱": "dashboard",
+    "📈 深度研究": "deep",
+    "🤖 股小智": "qa",
+    "⭐ 星标自选": "watchlist",
+    "🗂 历史轨迹": "history",
+    "⚙️ 个人中心": "profile",
     "⚙️ 管理后台": "admin",
 }
 
@@ -48,6 +53,8 @@ NAV_MENU = {
 # ------------------------------------------------------------
 if "theme" not in st.session_state:
     st.session_state.theme = "dark"
+if "cyberpunk" not in st.session_state:
+    st.session_state.cyberpunk = False
 pal = apply_theme(st.session_state.theme)
 
 if "code" not in st.session_state:
@@ -72,6 +79,12 @@ if "last_stages" not in st.session_state:
     st.session_state.last_stages = None
 if "llm_stats" not in st.session_state:
     st.session_state.llm_stats = None
+if "cum_tokens" not in st.session_state:
+    st.session_state.cum_tokens = 0
+if "search_open" not in st.session_state:
+    st.session_state.search_open = False
+if "key_heatmap" not in st.session_state:
+    st.session_state.key_heatmap = None
 if "token" not in st.session_state:
     st.session_state.token = None
 if "user" not in st.session_state:
@@ -91,6 +104,9 @@ if not st.session_state.token:
     render_auth(pal)
     st.stop()
 
+_user = st.session_state.user or {}
+_username = _user.get("username", "")
+
 
 def _reset_analysis():
     st.session_state.analysis_result = None
@@ -99,7 +115,58 @@ def _reset_analysis():
 
 
 # ------------------------------------------------------------
-# 侧边栏:导航 + 用户 + 分析控制面板
+# 顶部状态栏(declare_component,可回传 open_search)
+# ------------------------------------------------------------
+_bell = st.session_state.pop("_bell", False)
+_tb_ev = topbar.render_topbar(pal, _username, _user.get("role", "user"),
+                              st.session_state.data_source, bell_new=_bell)
+if _tb_ev and _tb_ev != st.session_state.get("_tb_handled"):
+    st.session_state["_tb_handled"] = _tb_ev
+    if _tb_ev.get("action") == "open_search":
+        st.session_state["search_open"] = True
+        if _tb_ev.get("heatmap"):
+            st.session_state["key_heatmap"] = _tb_ev["heatmap"]
+        st.rerun()
+
+
+def _render_search(pal):
+    """全局搜索面板(Ctrl+K / 顶部🔍触发)"""
+    st.markdown(f'<div class="tc-card tc-glow">🔍 <b>全局搜索</b> <span style="color:{pal["muted"]}">(Ctrl+K)</span></div>',
+                unsafe_allow_html=True)
+    options = ["手动输入"] + [f"{c} · {n}" for c, n in COMMON_STOCKS]
+    pick = st.selectbox("选择标的", options, key="gs_pick")
+    code = pick.split(" · ")[0] if pick != "手动输入" else st.text_input("股票代码", key="gs_code").strip()
+    c1, c2 = st.columns(2)
+    if c1.button("📈 前往深度研究", use_container_width=True):
+        if code:
+            st.session_state.code = code
+            st.session_state["page"] = "deep"
+            st.session_state["search_open"] = False
+            st.rerun()
+    if c2.button("🚀 直接启动分析", use_container_width=True):
+        if code:
+            st.session_state.code = code
+            st.session_state["search_open"] = False
+            try:
+                resp = start_analysis(code, st.session_state.mode_key, token=st.session_state.token)
+                st.session_state.running_task = resp["task_id"]
+                st.session_state["page"] = "deep"
+                st.session_state.analysis_result = None
+                st.toast(f"已启动 {lookup_name(code)} 分析", icon="🚀")
+                st.rerun()
+            except ApiError as e:
+                if e.status_code == 401:
+                    from auth_ui import logout
+                    logout()
+                    st.rerun()
+                st.toast(f"启动失败: {e}", icon="❌")
+
+if st.session_state.get("search_open"):
+    _render_search(pal)
+
+
+# ------------------------------------------------------------
+# 侧边栏:导航 + 用户 + 主题 + 分析控制面板
 # ------------------------------------------------------------
 with st.sidebar:
     st.markdown(f'<div style="font-size:18px;font-weight:800;color:{pal["fg"]};">📈 多智能体投研终端</div>',
@@ -111,24 +178,27 @@ with st.sidebar:
     else:
         st.error("后端未连接:请先启动 uvicorn backend.main:app --port 8000", icon="🔴")
 
-    # 主题切换
+    # 主题 + 赛博朋克
     theme_choice = st.radio("主题", ["dark", "light"],
                             index=0 if st.session_state.theme == "dark" else 1,
                             horizontal=True, label_visibility="collapsed")
     if theme_choice != st.session_state.theme:
         st.session_state.theme = theme_choice
         st.rerun()
+    cp = st.toggle("赛博朋克模式", value=bool(st.session_state.get("cyberpunk")), key="sb_cyberpunk")
+    if cp != bool(st.session_state.get("cyberpunk")):
+        st.session_state["cyberpunk"] = cp
+        st.rerun()
 
     # 用户信息 + 退出登录
-    _user = st.session_state.user or {}
     _role_badge = "👑 管理员" if _user.get("role") == "admin" else "👤 普通用户"
     st.markdown(f"""
     <div class="tc-card" style="padding:10px 12px;">
       <div style="display:flex;align-items:center;gap:10px;">
-        <div style="width:34px;height:34px;border-radius:50%;background:{pal['accent']};color:#fff;
-                    display:flex;align-items:center;justify-content:center;font-size:16px;">👤</div>
+        <div style="width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,{pal['accent']},{pal.get('purple','#b45cff')});color:#fff;
+                    display:flex;align-items:center;justify-content:center;font-size:16px;">{_username[:1].upper() if _username else '?'}</div>
         <div>
-          <div style="font-size:14px;font-weight:700;color:{pal['fg']};">{_user.get('username', '-')}</div>
+          <div style="font-size:14px;font-weight:700;color:{pal['fg']};">{_username}</div>
           <div style="font-size:11px;color:{pal['muted']};">{_role_badge}</div>
         </div>
       </div>
@@ -141,7 +211,7 @@ with st.sidebar:
     st.markdown("---")
     st.markdown(f'<div style="font-size:12px;color:{pal["muted"]};">🧭 导航</div>', unsafe_allow_html=True)
     _menu = dict(NAV_MENU)
-    if (st.session_state.user or {}).get("role") != "admin":
+    if _user.get("role") != "admin":
         _menu.pop("⚙️ 管理后台", None)   # 非管理员不显示管理后台入口
     st.radio("导航", list(_menu.keys()), key="nav_radio")
     st.session_state.page = _menu.get(st.session_state.nav_radio, "dashboard")
@@ -206,6 +276,17 @@ with st.sidebar:
                 st.rerun()
             st.toast(f"启动分析失败: {e}", icon="❌")
 
+    # 键盘热力图(趣味)
+    km = st.session_state.get("key_heatmap")
+    if km:
+        top = sorted(km.items(), key=lambda kv: -kv[1])[:6]
+        tiles = "".join(
+            f'<span style="background:{pal["card2"]};border:1px solid {pal["border"]};'
+            f'border-radius:6px;padding:2px 8px;margin:2px;font-size:11px;color:{pal["fg"]};">'
+            f'{k if k.isalnum() else "⌨"}:{v}</span>' for k, v in top)
+        st.markdown(f'<div style="font-size:12px;color:{pal["muted"]};margin-top:8px;">⌨ 键盘热力</div>{tiles}',
+                    unsafe_allow_html=True)
+
     st.markdown("---")
     st.caption("数据仅用于学习与技术演示,不构成投资建议")
 
@@ -232,6 +313,9 @@ if st.session_state.running_task:
                 st.session_state.data_source = result.get("data_source", "real")
                 st.session_state.last_stages = status.get("stages")
                 st.session_state.llm_stats = result.get("llm_stats")
+                _tok = (result.get("llm_stats") or {}).get("total_tokens") or 0
+                st.session_state.cum_tokens = st.session_state.get("cum_tokens", 0) + _tok
+                st.session_state["_bell"] = True
                 st.toast("✅ 分析完成", icon="🎉")
             except ApiError as e:
                 st.toast(f"获取结果失败: {e}", icon="❌")
@@ -243,10 +327,19 @@ if st.session_state.running_task:
             st.session_state.running_task = None
             st.rerun()
         else:
-            # 进行中:显示骨架屏,轮询等待
+            # 进行中:Agent 拓扑图(live 抗重挂载)+ 画中画进度卡 + 骨架屏,轮询等待
+            pc1, pc2 = st.columns([3, 1])
+            with pc1:
+                if status.get("stages"):
+                    agent_topology.render_topology(status["stages"], live=True, height=300)
+            with pc2:
+                pip_card.render(status.get("stages") or [], status["status"], pal)
+            if st.session_state.get("fish_tank_open"):
+                from components.ui import fish_tank
+                fish_tank.render(status.get("stages") or [], height=230)
             st.markdown('<div class="tc-skeleton"></div>', unsafe_allow_html=True)
             st.markdown('<div class="tc-skeleton line" style="width:60%"></div>', unsafe_allow_html=True)
-            time.sleep(1.0)
+            time.sleep(1.5)
             st.rerun()
     st.stop()
 
@@ -262,6 +355,8 @@ elif _page == "watchlist":
     watchlist.render(pal)
 elif _page == "history":
     history.render(pal)
+elif _page == "profile":
+    profile.render(pal)
 elif _page == "admin":
     admin.render(pal)
 else:

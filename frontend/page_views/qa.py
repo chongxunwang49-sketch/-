@@ -1,18 +1,22 @@
 """
-智能问答页(第五批)"股小智"
+智能问答页(v4.0 步骤6)「股小智」
 
-- 聊天界面:st.chat_message 消息气泡 + st.chat_input 输入
-- 多轮对话:会话存于 session_state,并同步后端 chat_history 表
+- 聊天界面:非对称气泡(用户右·蓝色玻璃 / AI 左·暗色玻璃+全息头环)
+- AI 回复打字机效果:最新一条 AI 消息逐字打印(一次性标志防重播,刷新后直出)
 - 回答展示 RAG 引用来源
-- "深度研究"按钮:识别聊天中的股票代码,一键触发多 Agent 深度分析
+- "深度研究":识别对话中的股票代码,一键转多 Agent 分析;运行期间由 app.py
+  轮询分支展示拓扑图 + 画中画进度卡
 """
 from __future__ import annotations
 
+import math
 import re
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from api_client import ApiError, chat, chat_history, start_analysis, upload_doc
+from components.ui import wow
 from stock_map import lookup_name
 
 
@@ -21,6 +25,8 @@ def _ensure_session() -> str:
         st.session_state["chat_session"] = "sess_default"
     if "chat_messages" not in st.session_state:
         st.session_state["chat_messages"] = []   # [{role, content, sources}]
+    if "_typed" not in st.session_state:
+        st.session_state["_typed"] = []
     return st.session_state["chat_session"]
 
 
@@ -62,11 +68,73 @@ def _detect_stock_code() -> str | None:
     return None
 
 
+def _user_bubble(pal: dict, text: str) -> str:
+    return f"""
+    <div style="display:flex;justify-content:flex-end;margin:10px 0;">
+      <div style="max-width:78%;background:linear-gradient(135deg,{pal['accent']},{pal.get('purple', '#b45cff')});
+                  color:#fff;border-radius:16px 16px 4px 16px;padding:10px 15px;
+                  font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word;
+                  box-shadow:0 6px 18px rgba(79,140,255,.25);">{text}</div>
+    </div>"""
+
+
+def _ai_bubble(pal: dict, text: str) -> str:
+    return f"""
+    <div style="display:flex;justify-content:flex-start;margin:10px 0;gap:10px;">
+      <div style="flex:0 0 32px;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;
+                  justify-content:center;font-size:14px;
+                  background:linear-gradient(135deg,{pal['accent']},{pal.get('purple', '#b45cff')});
+                  box-shadow:0 0 12px rgba(124,92,255,.55);">🌀</div>
+      <div style="max-width:78%;background:rgba(30,38,58,.55);border:1px solid {_rgba(pal['accent'], .22)};
+                  color:{pal['fg']};border-radius:4px 16px 16px 16px;padding:10px 15px;
+                  font-size:14px;line-height:1.7;white-space:pre-wrap;word-break:break-word;">{text}</div>
+    </div>"""
+
+
+def _sources_html(pal: dict, sources: list) -> str:
+    if not sources:
+        return ""
+    items = "".join(f"<div style='padding:2px 0;color:{pal['muted']};font-size:12px;'>[知识库{i}] {s[:200]}{'…' if len(s) > 200 else ''}</div>"
+                    for i, s in enumerate(sources, 1))
+    return f"""
+    <div style="display:flex;justify-content:flex-start;margin:0 0 8px 42px;">
+      <div style="max-width:78%;background:{pal['card2']};border:1px dashed {pal['border']};
+                  border-radius:10px;padding:8px 12px;font-size:12px;color:{pal['muted']};">
+        📚 引用来源({len(sources)} 条){items}
+      </div>
+    </div>"""
+
+
+def _render_messages(pal: dict):
+    msgs = st.session_state.get("chat_messages", [])
+    typed = st.session_state.get("_typed", [])
+    # 最新一条 assistant 消息下标
+    last_ai = None
+    for i in range(len(msgs) - 1, -1, -1):
+        if msgs[i]["role"] == "assistant":
+            last_ai = i
+            break
+
+    for i, m in enumerate(msgs):
+        if m["role"] == "user":
+            st.markdown(_user_bubble(pal, m["content"]), unsafe_allow_html=True)
+        else:
+            if i == last_ai and i not in typed:
+                # 打字机:渲染组件并立即写入一次性标志(防重播)
+                st.session_state["_typed"] = typed + [i]
+                est_h = min(420, 42 + max(1, math.ceil(len(m["content"]) / 36)) * 26)
+                components.html(wow.typewriter_html(m["content"], height=est_h), height=est_h)
+                st.markdown(_sources_html(pal, m.get("sources") or []), unsafe_allow_html=True)
+            else:
+                st.markdown(_ai_bubble(pal, m["content"]), unsafe_allow_html=True)
+                st.markdown(_sources_html(pal, m.get("sources") or []), unsafe_allow_html=True)
+
+
 def render(pal: dict):
     token = st.session_state.token
     session_id = _ensure_session()
 
-    st.markdown(f'<div style="font-size:18px;font-weight:800;color:{pal["fg"]};">🤖 股小智 · RAG 智能问答</div>',
+    st.markdown(f'<div class="tc-enter" style="font-size:18px;font-weight:800;color:{pal["fg"]};">🤖 股小智 · RAG 智能问答</div>',
                 unsafe_allow_html=True)
     st.caption("基于财报知识库(ChromaDB + bge)检索增强,回答引用知识库来源;支持多轮追问。")
     _load_history(token)
@@ -77,17 +145,12 @@ def render(pal: dict):
         if st.button("🔄 新会话", use_container_width=True):
             st.session_state["chat_session"] = "sess_" + str(len(st.session_state.get("chat_messages", [])))[-6:]
             st.session_state["chat_messages"] = []
+            st.session_state["_typed"] = []
             st.session_state["_chat_loaded"] = False
             st.rerun()
 
-    # 历史消息渲染
-    for m in st.session_state.get("chat_messages", []):
-        with st.chat_message("user" if m["role"] == "user" else "assistant"):
-            st.markdown(m["content"])
-            if m.get("sources"):
-                with st.expander(f"📚 引用来源({len(m['sources'])} 条)"):
-                    for i, s in enumerate(m["sources"], 1):
-                        st.markdown(f"`[知识库{i}]` {s[:200]}{'…' if len(s) > 200 else ''}")
+    # 消息渲染(非对称气泡 + 打字机)
+    _render_messages(pal)
 
     # 输入
     user_input = st.chat_input("输入问题,如:茅台2024年营收增速是多少?")
@@ -126,3 +189,8 @@ def render(pal: dict):
                 st.rerun()
             except ApiError as e:
                 st.error(f"上传失败: {e}")
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"

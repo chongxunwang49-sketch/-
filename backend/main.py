@@ -583,18 +583,33 @@ def admin_delete_user(user_id: int, admin: User = Depends(get_admin_user)):
 
 @app.get("/admin/stats")
 def admin_stats(_: User = Depends(get_admin_user)):
-    """系统监控:用户数/分析任务/API 调用/LLM token 消耗/数据源"""
+    """系统监控:用户数/分析任务/API 调用/LLM token 消耗/CPU内存(psutil,缺失时 None)"""
     from .agents import llm as llm_mod
     with SessionLocal() as session:
         users = session.scalar(select(func.count(User.id))) or 0
         from .models import History
         tasks = session.scalar(select(func.count(History.id))) or 0
+    # 系统资源(psutil 缺失时返回 None,前端自动降级为业务指标百分比,不阻塞接口)
+    sys_stats = None
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        sys_stats = {
+            "cpu_percent": round(psutil.cpu_percent(interval=0.3), 1),
+            "memory_percent": round(mem.percent, 1),
+            "memory_used_gb": round(mem.used / 1024 ** 3, 1),
+            "memory_total_gb": round(mem.total / 1024 ** 3, 1),
+            "disk_percent": round(psutil.disk_usage("/").percent, 1),
+        }
+    except Exception:
+        sys_stats = None
     return {
         "users": users, "analysis_tasks": tasks,
         "api_calls": API_STATS.get("total", 0),
         "api_by_path": dict(sorted(API_STATS.get("by_path", {}).items(), key=lambda kv: -kv[1])[:10]),
         "llm_stats": llm_mod.get_llm_stats(),
         "scheduler": "running",
+        "sys_stats": sys_stats,
     }
 
 

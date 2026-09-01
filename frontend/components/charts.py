@@ -55,12 +55,14 @@ def _style_axes(fig: go.Figure, pal: dict, n_rows: int):
 
 
 def build_kline_chart(df: pd.DataFrame, pal: dict, ma_periods: list[int],
-                      secondary: str = "macd", height: int = 600) -> go.Figure:
+                      secondary: str = "macd", height: int = 600,
+                      extra_ma: tuple[int, pd.Series] | None = None) -> go.Figure:
     """标准 K线图。
 
     df 需含列: date/open/high/low/close/volume/ma5/ma10/ma20/ma60/
                macd_dif/macd_dea/macd_hist/rsi14
     secondary: "macd" | "rsi" | "none"  副图指标
+    extra_ma: (周期N, 前端现算的 MA 序列) -> 叠加一条动态均线(v4.0 滑块)
     """
     up, down = pal["up"], pal["down"]
     n_rows = 3 if secondary != "none" else 2
@@ -93,6 +95,16 @@ def build_kline_chart(df: pd.DataFrame, pal: dict, ma_periods: list[int],
                 x=df["date"], y=df[col], name=f"MA{w}",
                 line=dict(width=1.2, color=MA_COLORS.get(col, "#999999")),
                 hovertemplate=f"MA{w}: %{{y:.2f}}<extra></extra>",
+            ), row=1, col=1)
+
+    # v4.0:动态 MA 滑块(前端现算的周期均线,青色高亮)
+    if extra_ma is not None:
+        period, series = extra_ma
+        if series is not None:
+            fig.add_trace(go.Scatter(
+                x=df["date"], y=series, name=f"MA{period}",
+                line=dict(width=1.8, color="#00e5ff"),
+                hovertemplate=f"MA{period}: %{{y:.2f}}<extra></extra>",
             ), row=1, col=1)
 
     # ---- 成交量副图(红涨绿跌) ----

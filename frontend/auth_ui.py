@@ -1,22 +1,23 @@
 """
-登录 / 注册页面(用户体系第一批)
+登录 / 注册页面(v4.0 步骤2:「沉浸式双栏品牌展厅」)
 
-设计:专业金融终端暗色风格
-- 暗色渐变背景 + CSS 星空粒子动画(纯 CSS,零 JS,兼容性好)
-- 居中登录卡片:Logo / 系统名称 / 输入框 / 登录按钮
-- 登录失败 Toast 通知;加载中按钮脉冲
-- 注册页:密码强度实时检测(弱/中/强)、用户名唯一性校验(提交时)
+布局: Left 60%(SVG 品牌轮播) + Right 40%(玻璃登录卡)
+- 左侧: 4 张 AI 生成 SVG 概念图自动轮播(3D 翻转 + 进度点 + Slogan),st.components.html 承载
+- 右侧: 毛玻璃登录卡(星空粒子背景 + 密码眼睛 + 流光按钮 + 管理员快捷登录)
+- 注册页: 密码强度实时检测(弱/中/强)、用户名唯一性校验(提交时)
 - 注册成功自动登录并跳转
 
-对外接口:render_auth(pal) —— 未登录时在 app.py 调用,渲染整页后自行 st.stop()
+对外接口: render_auth(pal) —— 未登录时在 app.py 调用,渲染整页后自行 st.stop()
 """
 from __future__ import annotations
 
 import random
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from api_client import ApiError, login, register
+from components.ui import login_carousel
 from theme import STATUS_COLORS
 
 
@@ -36,6 +37,7 @@ def _starfield_html(n: int = 46) -> str:
 
 
 def _auth_css(pal: dict) -> str:
+    fg = pal["fg"]
     return f"""
     <style>
     .auth-bg {{
@@ -47,21 +49,47 @@ def _auth_css(pal: dict) -> str:
         animation: auth-twinkle 3s ease-in-out infinite;
     }}
     @keyframes auth-twinkle {{ 0%,100% {{ opacity: .12 }} 50% {{ opacity: .9 }} }}
-    /* 卡片:中间列容器 */
+    /* 右侧登录卡:玻璃态(毛玻璃 + 霓虹描边) */
     [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) [data-testid="stVerticalBlock"] {{
-        background: rgba(17, 23, 36, .86); border: 1px solid #2c3a52; border-radius: 18px;
-        padding: 30px 30px 26px; margin-top: 8vh;
-        box-shadow: 0 24px 80px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06);
-        backdrop-filter: blur(8px); position: relative; z-index: 2;
+        background: rgba(15, 21, 34, .72);
+        border: 1px solid rgba(79, 140, 255, .28);
+        border-radius: 18px;
+        padding: 28px 26px 22px; margin-top: 4vh;
+        box-shadow: 0 24px 80px rgba(0,0,0,.55), 0 0 28px rgba(124,92,255,.16), inset 0 1px 0 rgba(255,255,255,.06);
+        backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+        position: relative; z-index: 2;
     }}
-    .auth-logo {{ text-align: center; font-size: 34px; }}
-    .auth-title {{ text-align: center; font-size: 22px; font-weight: 800; color: {pal['fg']}; margin: 2px 0 2px; }}
-    .auth-sub {{ text-align: center; font-size: 12px; color: {pal['muted']}; margin-bottom: 18px; }}
+    .auth-logo {{ text-align: center; font-size: 34px;
+        filter: drop-shadow(0 0 14px rgba(124,92,255,.6)); }}
+    .auth-title {{ text-align: center; font-size: 22px; font-weight: 800; color: {fg}; margin: 2px 0 2px;
+        background: linear-gradient(90deg, {pal['accent']}, {pal.get('purple', '#b45cff')});
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
+    .auth-sub {{ text-align: center; font-size: 12px; color: {pal['muted']}; margin-bottom: 16px; }}
     .auth-strength {{ text-align: center; font-size: 12px; margin-top: 2px; }}
     .auth-foot {{ text-align: center; font-size: 12px; color: {pal['muted']}; margin-top: 14px; }}
-    /* 登录/注册按钮脉冲 */
-    @keyframes auth-pulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(79,140,255,.5); }} 70% {{ box-shadow: 0 0 0 10px rgba(79,140,255,0); }} }}
-    .auth-btn button {{ animation: auth-pulse 1.6s infinite; }}
+    .auth-demo {{ text-align: center; font-size: 11px; color: {pal['muted']}; margin-top: 8px; }}
+    /* 输入框聚焦流光下划线 */
+    [data-testid="stTextInput"] {{ position: relative; }}
+    [data-testid="stTextInput"]:focus-within::after {{
+        content: ""; position: absolute; left: 0; right: 0; bottom: 2px; height: 2px;
+        background: linear-gradient(90deg, transparent, {pal['accent']}, {pal.get('purple', '#b45cff')}, transparent);
+        animation: auth-flow 1.6s linear infinite; border-radius: 2px;
+    }}
+    @keyframes auth-flow {{ 0% {{ background-position: -200% 0; }} 100% {{ background-position: 200% 0; }} }}
+    [data-testid="stTextInput"]:focus-within::after {{ background-size: 200% 100%; }}
+    /* 登录按钮流光 + 按压弹性 */
+    .auth-btn button {{
+        position: relative; overflow: hidden;
+        background: linear-gradient(120deg, {pal['accent']}, {pal.get('purple', '#b45cff')}) !important;
+        border: none !important;
+        transition: transform .25s cubic-bezier(0.34,1.56,0.64,1), box-shadow .25s !important;
+    }}
+    .auth-btn button:hover {{ transform: translateY(-2px); box-shadow: 0 8px 24px rgba(124,92,255,.5) !important; }}
+    .auth-btn button:active {{ transform: scale(.95); }}
+    @keyframes auth-pulse {{ 0%,100% {{ box-shadow: 0 0 0 0 rgba(124,92,255,.55); }} 70% {{ box-shadow: 0 0 0 10px rgba(124,92,255,0); }} }}
+    .auth-btn button {{ animation: auth-pulse 1.8s infinite; }}
+    /* 显示密码 / 快捷登录等小按钮 */
+    .stCheckbox label {{ color: {pal['muted']} !important; font-size: 12px !important; }}
     </style>
     """
 
@@ -101,12 +129,15 @@ def _logo_header(pal: dict) -> str:
 
 
 def render_auth(pal: dict):
-    """渲染登录/注册整页(调用方需随后 st.stop())"""
+    """渲染双栏登录/注册整页(调用方需随后 st.stop())"""
     st.markdown(f'<div class="auth-bg">{_starfield_html()}</div>{_auth_css(pal)}',
                 unsafe_allow_html=True)
 
-    _, mid, _ = st.columns([1, 2.4, 1])
-    with mid:
+    left, right = st.columns([3, 2], gap="medium")
+    with left:
+        # 左 60%:品牌 SVG 轮播(iframe 承载,登录页 rerun 少,开销可接受)
+        components.html(login_carousel.render_html(), height=530)
+    with right:
         st.markdown(_logo_header(pal), unsafe_allow_html=True)
         mode = st.session_state.get("auth_mode", "login")
         if mode == "login":
@@ -118,9 +149,11 @@ def render_auth(pal: dict):
 
 
 def _render_login(pal: dict):
+    show = st.checkbox("显示密码", key="auth_show_pw")
+    pw_type = "" if show else "password"
     with st.form("login_form"):
         username = st.text_input("用户名", key="auth_username")
-        password = st.text_input("密码", type="password", key="auth_password")
+        password = st.text_input("密码", type=pw_type, key="auth_password")
         submitted = st.form_submit_button("登 录", type="primary", use_container_width=True)
 
     if submitted:
@@ -142,12 +175,22 @@ def _render_login(pal: dict):
     if c2.button("忘记密码", use_container_width=True):
         st.toast("请联系管理员重置密码(演示占位)", icon="🔒")
 
+    # 管理员快捷登录:一键填充 admin/admin123
+    if st.button("👑 管理员快捷登录(演示)", use_container_width=True):
+        st.session_state["auth_username"] = "admin"
+        st.session_state["auth_password"] = "admin123"
+        st.toast("已填充 admin/admin123,点击「登 录」即可", icon="✨")
+        st.rerun()
+    st.markdown('<div class="auth-demo">演示账号: admin / admin123</div>', unsafe_allow_html=True)
+
 
 def _render_register(pal: dict):
+    show = st.checkbox("显示密码", key="reg_show_pw")
+    pw_type = "" if show else "password"
     with st.form("register_form"):
         username = st.text_input("用户名(3-20 位字母/数字/下划线)", key="reg_username")
-        password = st.text_input("密码", type="password", key="reg_password")
-        confirm = st.text_input("确认密码", type="password", key="reg_confirm")
+        password = st.text_input("密码", type=pw_type, key="reg_password")
+        confirm = st.text_input("确认密码", type=pw_type, key="reg_confirm")
         email = st.text_input("邮箱(可选)", key="reg_email")
         submitted = st.form_submit_button("注 册", type="primary", use_container_width=True)
 
