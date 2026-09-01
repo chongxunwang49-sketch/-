@@ -63,6 +63,7 @@ class WorkflowState(TypedDict):
     risk: Optional[RiskAssessment]
     report: Optional[AnalysisReport]
     data_source: str  # real/backup/mock,来自采集降级链
+    mode: str  # full=完整链路 / quick=跳过情感分析(专业看板升级,默认 full)
 
 
 # ------------------------------------------------------------
@@ -101,9 +102,9 @@ def _load_news(code: str) -> List[NewsItem]:
 # 节点:5 个 Agent
 # ------------------------------------------------------------
 def collect_node(state: WorkflowState) -> dict:
-    """采集:行情(带三级降级)+ 新闻,写入 State"""
+    """采集:行情(带三级降级)+ 新闻,写入 State。quick 模式跳过新闻抓取与情感分析。"""
     code = state["stock_code"]
-    logger.info("[collect] 开始采集 %s", code)
+    logger.info("[collect] 开始采集 %s (mode=%s)", code, state.get("mode", "full"))
 
     # 行情:调三级降级链(主源失败自动降级),数据入库
     result = fetch_stock_with_degradation(code)
@@ -112,14 +113,16 @@ def collect_node(state: WorkflowState) -> dict:
     if technical is None:
         logger.warning("[collect] 行情不足 20 条,技术指标不可用")
 
-    # 新闻:刷新并读库(搜索关键词用公司名而非代码)
-    try:
-        from ..agents.report import COMPANY_NAMES
-        keyword = COMPANY_NAMES.get(code, code)
-        fetch_news_data(stock_code=code, keyword=keyword)
-    except Exception as e:
-        logger.warning("[collect] 新闻刷新失败(用库中已有数据): %s", e)
-    news = _load_news(code)
+    # 新闻:快速模式不抓新闻(情感分析随之跳过),完整模式刷新并读库(关键词用公司名)
+    news: List[NewsItem] = []
+    if state.get("mode") != "quick":
+        try:
+            from ..agents.report import COMPANY_NAMES
+            keyword = COMPANY_NAMES.get(code, code)
+            fetch_news_data(stock_code=code, keyword=keyword)
+        except Exception as e:
+            logger.warning("[collect] 新闻刷新失败(用库中已有数据): %s", e)
+        news = _load_news(code)
     logger.info("[collect] 完成: source=%s, 新闻 %d 条", result.get("source"), len(news))
 
     return {
@@ -143,17 +146,19 @@ def technical_node(state: WorkflowState) -> dict:
 
 
 def sentiment_node(state: WorkflowState) -> dict:
-    """情感分析:新闻 -> 情感得分;异常时打降级标记,不中断图"""
+    """情感分析:新闻 -> 情感得分(并回填单条新闻得分);异常时打降级标记,不中断图"""
     code = state["stock_code"]
+    items = state.get("news_items") or []
     try:
-        sentiment = run_sentiment_agent(state.get("news_items") or [], _llm(), code)
-        return {"sentiment": sentiment, "sentiment_failed": False}
+        sentiment = run_sentiment_agent(items, _llm(), code)
+        return {"sentiment": sentiment, "sentiment_failed": False, "news_items": items}
     except Exception as e:
         logger.error("[sentiment] 降级(返回中性): %s", e)
         return {
             "sentiment": SentimentResult(stock_code=code, score=0.5,
                                          reason="情感分析降级,默认中性", source="degraded"),
             "sentiment_failed": True,
+            "news_items": items,
         }
 
 
@@ -210,6 +215,9 @@ def report_node(state: WorkflowState) -> dict:
 # 条件路由:新闻为空时跳过情感分析(步骤10 的 Conditional Edge)
 # ------------------------------------------------------------
 def _route_after_collect(state: WorkflowState) -> str:
+    """条件路由:quick 模式或新闻为空时跳过情感分析,直接进 risk"""
+    if state.get("mode") == "quick":
+        return "risk"
     return "sentiment" if state.get("news_items") else "risk"
 
 
@@ -239,10 +247,11 @@ def build_workflow():
     return g.compile()
 
 
-def run_analysis(stock_code: str) -> AnalysisReport:
+def run_analysis(stock_code: str, mode: str = "full") -> AnalysisReport:
     """
     主执行入口:输入股票代码,跑完整多智能体流程,返回最终报告。
     示例: run_analysis("600519")
+    mode: full=完整链路 / quick=跳过情感分析(专业看板升级)
     """
     graph = build_workflow()
     result = graph.invoke({
@@ -255,6 +264,7 @@ def run_analysis(stock_code: str) -> AnalysisReport:
         "risk": None,
         "report": None,
         "data_source": "real",
+        "mode": mode,
     })
     report = result.get("report")
     if report is None:

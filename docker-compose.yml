@@ -52,6 +52,19 @@ services:
       chroma:
         condition: service_started
 
+  # 专业看板前端(与后端共用同一镜像,改 CMD 启动 Streamlit)
+  frontend:
+    build: .
+    container_name: stock-agent-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      API_BASE: http://backend:8000
+    command: streamlit run frontend/app.py --server.address 0.0.0.0 --server.port 8501
+    depends_on:
+      backend:
+        condition: service_started
+
 volumes:
   pgdata:
   chromadata:

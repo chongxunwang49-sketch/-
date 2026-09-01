@@ -13,6 +13,7 @@ COPY backend ./backend
 COPY scripts ./scripts
 COPY frontend ./frontend
 COPY data ./data
+COPY .streamlit/config.toml .streamlit/config.toml
 
 ENV PYTHONPATH=/app
 EXPOSE 8000

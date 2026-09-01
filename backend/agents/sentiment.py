@@ -28,6 +28,8 @@ def run_sentiment_agent(news_items: List[NewsItem], client: LLMClient,
     scores, reasons = [], []
     for item in news_items:
         result = _analyze_one(item, client, stock_code)
+        # 回填单条新闻得分,供前端"情绪时间线"绘制逐条情感(不改业务判断,仅补充输出)
+        item.sentiment_score = result.score
         scores.append(result.score)
         reasons.append(result.reason)
 

@@ -25,6 +25,10 @@ class NewsItem(BaseModel):
     content: str = Field(default="", description="新闻正文/摘要")
     publish_time: Optional[datetime] = Field(default=None, description="发布时间")
     source: Optional[str] = Field(default=None, description="新闻来源")
+    sentiment_score: Optional[float] = Field(
+        default=None,
+        description="单条新闻的情感得分 0-1(由情感分析 Agent 回填,用于前端情绪时间线)",
+    )
 
     def to_llm_text(self) -> str:
         """把一条新闻转成给 LLM 看的紧凑文本"""

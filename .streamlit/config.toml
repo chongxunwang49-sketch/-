@@ -1,0 +1,11 @@
+# Streamlit 主题:以专业金融终端的暗色为默认基调
+# 看板内自定义 HTML 卡片与 Plotly 图表的深浅切换由 frontend/theme.py 运行时控制
+[theme]
+base = "dark"
+primaryColor = "#4f8cff"
+backgroundColor = "#0b0e14"
+secondaryBackgroundColor = "#141a26"
+textColor = "#e8edf6"
+
+[server]
+headless = true

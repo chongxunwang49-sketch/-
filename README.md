@@ -1,6 +1,8 @@
 # 多智能体股票分析系统
 
-基于 **LangGraph 多智能体编排 + RAG 检索增强**的 A 股个股自动分析系统。输入股票代码,系统自动完成数据采集 → 技术分析 & 情感分析(并行) → 风险评估 → 报告生成,并在前端实时展示各 Agent 进度与 K 线走势。
+基于 **LangGraph 多智能体编排 + RAG 检索增强**的 A 股个股自动分析系统。输入股票代码,系统自动完成数据采集 → 技术分析 & 情感分析(并行) → 风险评估 → 报告生成,并以**专业投研终端**形式在前端展示:行情看板、交互式 K 线(均线/成交量/MACD/RSI)、Agent 流水线进度、结构化投资报告、RAG 数据溯源。
+
+前端(Streamlit)采用"侧边栏控制面板 + 顶部行情概览 + 中部图表 + 底部多标签页"的专业看板布局,分析任务改为**异步轮询**(`POST /analyze` → 轮询 `/task/status` → 取 `/task/result`),避免长 HTTP 阻塞。
 
 ---
 
@@ -38,6 +40,23 @@
 
 ---
 
+## 一·五、后端 API(专业看板升级)
+
+| 接口 | 说明 |
+|---|---|
+| `GET /health` | 健康检查 |
+| `GET /stock/info?code=600519` | 基础信息(名称/现价/涨跌幅/技术指标快照) |
+| `GET /stock/history?code=600519&range=3m` | K线历史(含 MA/MACD/RSI/BOLL 序列;`range=1m/3m/6m/1y/custom`,自定义用 `start`/`end`) |
+| `POST /analyze` | 异步启动分析,`{stock_code, mode}`(mode: `full`/`quick`),返回 `task_id` |
+| `GET /task/status?task_id=...` | 轮询任务状态(各 Agent 阶段/耗时/降级标记) |
+| `GET /task/result?task_id=...` | 最终报告 + 全部中间数据 + LLM token 统计 |
+| `POST /analyze/sync`、`GET /analyze/stream` | 兼容旧接口(同步分析 / SSE 流式) |
+
+**异步工作流**:`POST /analyze` 立即返回 `task_id` → 后端 `TaskManager` 后台线程跑 LangGraph,消费 `graph.stream()` 事件流映射各 Agent 进度 → 前端每 ~1s 轮询 `/task/status`,完成后取 `/task/result`。
+**分析模式**:`full` = 完整链路(采集→技术∥情感→风险→报告+RAG);`quick` = 跳过情感分析(更快)。
+
+---
+
 ## 二、目录结构
 
 ```
@@ -55,8 +74,17 @@ stock-agent-system/
 │   │   ├── technical.py   #   技术分析 Agent(指标计算+解读)
 │   │   ├── risk.py        #   风险评估 Agent(含规则兜底)
 │   │   └── report.py      #   报告生成 Agent
+│   ├── services/
+│   │   ├── task_manager.py # 异步任务管理(线程 + stream 事件 -> Agent 进度)
+│   │   └── stock_meta.py   # A股标的映射表(名称补全)
 │   └── graph/workflow.py  # LangGraph 编排(并行+条件路由+降级)
-├── frontend/app.py        # Streamlit + Plotly 前端
+├── frontend/              # Streamlit 专业投研终端
+│   ├── app.py             # 主页面(侧边栏+行情卡+K线+5个Tab)
+│   ├── api_client.py      # 后端 API 客户端(异步轮询)
+│   ├── stock_map.py       # A股标的映射(前端副本)
+│   ├── theme.py           # 暗色/亮色主题 + 全局 CSS
+│   └── components/        # 图表/流水线/报告卡片组件
+├── .streamlit/config.toml # Streamlit 暗色主题
 ├── scripts/               # 采集与建库脚本
 │   ├── fetch_stock_data.py # 行情三级降级采集
 │   ├── fetch_news.py       # 东方财富新闻爬虫
@@ -100,9 +128,11 @@ streamlit run frontend/app.py
 
 ```bash
 docker compose up -d --build
-# 访问 http://localhost:8000/health 确认后端就绪
+# 后端:   http://localhost:8000/health 确认就绪
+# 前端:   http://localhost:8501         专业投研终端
 ```
-(LLM 走宿主机 Ollama,容器经 `host.docker.internal:11434` 访问)
+(LLM 走宿主机 Ollama,容器经 `host.docker.internal:11434` 访问;
+`docker-compose.yml` 含 4 个服务:`postgres` + `chroma` + `backend` + `frontend`)
 
 ---
 

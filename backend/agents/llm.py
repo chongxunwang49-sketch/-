@@ -178,9 +178,22 @@ def _usage_to_tokens(usage) -> dict:
     }
 
 
+# 进程级 Token 统计(专业看板升级):供 /task/result 返回给前端"系统日志/Token" Tab
+TOKEN_STATS = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def get_llm_stats() -> dict:
+    """返回当前累计 Token 统计快照(调用方按任务前后做增量)"""
+    return dict(TOKEN_STATS)
+
+
 def _log_usage(provider: str, tokens: dict, elapsed: float) -> None:
-    """结构化日志:token 消耗与耗时(步骤16可观测性埋点)"""
+    """结构化日志:token 消耗与耗时(步骤16可观测性埋点);同时累计到进程级统计"""
+    TOKEN_STATS["calls"] += 1
     if tokens:
+        TOKEN_STATS["total_tokens"] += tokens.get("total_tokens", 0)
+        TOKEN_STATS["prompt_tokens"] += tokens.get("prompt_tokens", 0)
+        TOKEN_STATS["completion_tokens"] += tokens.get("completion_tokens", 0)
         logger.info("LLM[%s] 耗时 %.2fs, token: %s", provider, elapsed, tokens)
     else:
         logger.info("LLM[%s] 耗时 %.2fs(无 token 统计)", provider, elapsed)
