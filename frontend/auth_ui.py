@@ -152,7 +152,7 @@ def render_auth(pal: dict):
 
 def _render_login(pal: dict):
     show = st.checkbox("显示密码", key="auth_show_pw")
-    pw_type = "" if show else "password"
+    pw_type = "default" if show else "password"
     with st.form("login_form"):
         username = st.text_input("用户名", key="auth_username")
         password = st.text_input("密码", type=pw_type, key="auth_password")
@@ -188,7 +188,7 @@ def _render_login(pal: dict):
 
 def _render_register(pal: dict):
     show = st.checkbox("显示密码", key="reg_show_pw")
-    pw_type = "" if show else "password"
+    pw_type = "default" if show else "password"
     with st.form("register_form"):
         username = st.text_input("用户名(3-20 位字母/数字/下划线)", key="reg_username")
         password = st.text_input("密码", type=pw_type, key="reg_password")
