@@ -70,8 +70,9 @@ def run_technical_agent(indicators: TechnicalIndicators, client: LLMClient) -> s
     """把技术指标交给 LLM 做技术面解读,返回解读文本"""
     user_prompt = f"请解读以下技术指标:\n{indicators.to_llm_text()}"
     if client.provider == "dify":
-        # 用户在 dify 搭建的技术解读应用,输入变量名 indicators
-        out = client.complete_dify({"indicators": indicators.to_llm_text()})
+        # 走 dify 技术解读应用(输出变量 analysis)
+        from ..services.dify import call_workflow
+        out = call_workflow("technical", {"indicators": indicators.to_llm_text()})
         return str(out.get("analysis", "")).strip()
     text = client.complete(TECHNICAL_SYSTEM_PROMPT, user_prompt)
     logger.info("技术解读完成: %s", text[:80])

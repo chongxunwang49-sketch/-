@@ -47,10 +47,12 @@ def _analyze_one(item: NewsItem, client: LLMClient, stock_code: str) -> Sentimen
     user_prompt = f"请分析以下新闻的情绪:\n{item.to_llm_text()}"
     try:
         if client.provider == "dify":
-            # 走用户在 dify 搭建的情感分析应用(输入变量名 news_text,见 dify操作文档)
-            out = client.complete_dify({"news_text": f"{item.title}\n{item.content}"})
-            score = float(out.get("score", 0.5))
-            reason = str(out.get("reason", ""))
+            # 走 dify 情感分析应用(输出变量 news_result,JSON 文本)
+            from ..services.dify import call_workflow
+            out = call_workflow("sentiment", {"news_text": f"{item.title}\n{item.content}"})
+            data = extract_json(str(out.get("news_result", "")))
+            score = float(data.get("score", 0.5))
+            reason = str(data.get("reason", ""))
         else:
             text = client.complete(SENTIMENT_SYSTEM_PROMPT, user_prompt)
             data = extract_json(text)

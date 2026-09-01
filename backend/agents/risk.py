@@ -21,16 +21,18 @@ def run_risk_agent(sentiment: Optional[SentimentResult], technical_analysis: Opt
 
     try:
         if client.provider == "dify":
-            # 用户在 dify 搭建的风险评估应用,输入变量 sentiment_score / technical_analysis
-            out = client.complete_dify({
-                "sentiment_score": float(score_txt) if sentiment else 0.5,
+            # 走 dify 风险评估应用(输出变量 risk_result,JSON 文本)
+            from ..services.dify import call_workflow
+            out = call_workflow("risk", {
+                "sentiment_score": str(float(score_txt)) if sentiment else "0.5",
                 "technical_analysis": tech_txt,
             })
+            data = extract_json(str(out.get("risk_result", "")))
             return RiskAssessment(
                 stock_code=stock_code,
-                risk_level=str(out.get("risk_level", "中")),
-                risks=[str(r) for r in out.get("risks", [])],
-                summary=str(out.get("summary", "")),
+                risk_level=str(data.get("risk_level", "中")),
+                risks=[str(r) for r in data.get("risks", [])],
+                summary=str(data.get("summary", "")),
             )
         text = client.complete(RISK_SYSTEM_PROMPT, user_prompt)
         data = extract_json(text)

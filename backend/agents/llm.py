@@ -103,15 +103,9 @@ class LLMClient:
         )
 
     def _init_dify(self):
-        import httpx
-        self._httpx = httpx
+        # dify 作为 provider:实际调用走 backend.services.dify.call_workflow(按角色选 app)
+        # 4 组角色 app 配置见 .env 的 DIFY_{ROLE}_APP_ID / DIFY_{ROLE}_API_KEY
         self.dify_base = os.getenv("DIFY_BASE_URL", "http://localhost/v1")
-        self.dify_app_id = os.getenv("DIFY_APP_ID", "")
-        self.dify_api_key = os.getenv("DIFY_API_KEY", "")
-        if not self.dify_app_id or not self.dify_api_key:
-            raise LLMError("LLM_PROVIDER=dify 但未配置 DIFY_APP_ID / DIFY_API_KEY(等用户在 dify 侧交付)")
-        if not self.dify_app_id.startswith("app-"):
-            raise LLMError(f"DIFY_APP_ID 格式应为 app-xxx,当前值: {self.dify_app_id}")
 
     # ---------------- 核心调用 ----------------
     @_retry_decorator()

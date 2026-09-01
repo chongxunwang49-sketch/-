@@ -40,9 +40,10 @@ def run_report_agent(sentiment: Optional[SentimentResult],
     user_prompt = "\n".join(parts)
 
     if client.provider == "dify":
-        # 用户在 dify 搭建的报告生成应用
-        out = client.complete_dify({
-            "sentiment_score": sentiment.score if sentiment else 0.5,
+        # 走 dify 报告生成应用(输出变量 report)
+        from ..services.dify import call_workflow
+        out = call_workflow("report", {
+            "sentiment_score": str(sentiment.score) if sentiment else "0.5",
             "technical_analysis": technical_analysis or "",
             "risk_level": risk.risk_level if risk else "中",
             "company_name": company,
