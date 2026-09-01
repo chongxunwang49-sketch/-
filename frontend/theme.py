@@ -189,10 +189,12 @@ def apply_theme(theme_name: str) -> dict:
         border-color: {acc};
         box-shadow: {glow};
     }}
-    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) div:nth-child(2) {{
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) div:nth-child(2),
+    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) span {{
         color: {pal['fg']}; font-weight: 700;
     }}
-    [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label div:first-child {{ display:none; }}
+    /* 不隐藏任何 label 子元素——Streamlit 1.62 中 div:first-child 可能是文字容器,
+       display:none 会误藏文字(用户反馈:导航无文字)。保持默认圆点,仅做图块美化 */
 
     /* 分析控制台(st.expander 玻璃面板) */
     [data-testid="stExpander"] details {{

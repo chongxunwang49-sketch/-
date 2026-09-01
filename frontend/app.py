@@ -27,6 +27,12 @@ from page_views import admin, dashboard, deep_analysis, history, profile, qa, wa
 from stock_map import COMMON_STOCKS, lookup_name
 from theme import apply_theme
 
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    h = hex_color.lstrip("#")
+    return f"rgba({int(h[0:2], 16)},{int(h[2:4], 16)},{int(h[4:6], 16)},{alpha})"
+
+
 st.set_page_config(page_title="多智能体股票投研终端", page_icon="📈", layout="wide")
 
 NAV_MENU = {
@@ -225,9 +231,16 @@ if st.session_state.get("search_open"):
 # 侧边栏:紧凑游戏 dock(仅 Logo + 导航图块)
 # ------------------------------------------------------------
 with st.sidebar:
-    st.markdown(f'<div style="font-size:17px;font-weight:800;color:{pal["fg"]};">📈 多智能体投研终端</div>',
-                unsafe_allow_html=True)
-    st.caption("LangGraph 9-Agent · RAG 财报 · 三级降级")
+    st.markdown(f"""
+    <div style="text-align:center;margin:6px 0 2px;">
+      <div style="font-size:20px;font-weight:900;letter-spacing:1px;
+           background:linear-gradient(90deg,{pal['accent']},{pal.get('purple', '#b45cff')});
+           -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+           filter:drop-shadow(0 0 18px {_rgba(pal.get('purple', '#b45cff'), .35)});">📈 多智能体投研终端</div>
+      <div style="font-size:11px;color:{pal['muted']};margin-top:5px;letter-spacing:.5px;
+           background:{pal['card2']};border:1px solid {pal['border']};border-radius:20px;
+           display:inline-block;padding:3px 12px;">LangGraph 9-Agent · RAG 财报 · 三级降级</div>
+    </div>""", unsafe_allow_html=True)
     st.markdown("---")
     _menu = dict(NAV_MENU)
     if _user.get("role") != "admin":
