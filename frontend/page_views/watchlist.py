@@ -14,7 +14,7 @@ from stock_map import COMMON_STOCKS, lookup_name
 
 
 def render(pal: dict):
-    st.markdown(f'<div style="font-size:18px;font-weight:800;color:{pal["fg"]};">⭐ 自选股管理</div>',
+    st.markdown(f'<div class="tc-enter" style="font-size:18px;font-weight:800;color:{pal["fg"]};">⭐ 星标自选</div>',
                 unsafe_allow_html=True)
     token = st.session_state.token
 

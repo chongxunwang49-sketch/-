@@ -12,7 +12,7 @@ from api_client import ApiError, user_history
 
 
 def render(pal: dict):
-    st.markdown(f'<div style="font-size:18px;font-weight:800;color:{pal["fg"]};">📋 历史分析记录</div>',
+    st.markdown(f'<div class="tc-enter" style="font-size:18px;font-weight:800;color:{pal["fg"]};">🗂 历史轨迹</div>',
                 unsafe_allow_html=True)
     token = st.session_state.token
 

@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from api_client import ApiError, health, start_analysis, task_result, task_status
 from components import agent_topology, pipeline
-from components.ui import pip_card, topbar
+from components.ui import topbar
 from data_layer import clear_all_cached
 from page_views import admin, dashboard, deep_analysis, history, profile, qa, watchlist
 from stock_map import COMMON_STOCKS, lookup_name
@@ -125,7 +125,8 @@ if _tb_ev and _tb_ev != st.session_state.get("_tb_handled"):
 # ------------------------------------------------------------
 def _render_console(pal):
     running = st.session_state.running_task is not None
-    with st.expander("⚡ 分析控制台 · 输入代码快速发起 9-Agent 分析", expanded=True):
+    # 默认折叠:切换板块时不残留"驾驶舱 UI",需要时再展开(v4.2)
+    with st.expander("⚡ 分析控制台 · 输入代码快速发起 9-Agent 分析", expanded=False):
         c1, c2, c3, c4 = st.columns([1.35, 1.35, 1.35, 1], gap="medium")
 
         with c1:
@@ -233,12 +234,11 @@ if st.session_state.get("search_open"):
 with st.sidebar:
     st.markdown(f"""
     <div style="text-align:center;margin:6px 0 2px;">
-      <div style="font-size:20px;font-weight:900;letter-spacing:1px;
+      <div class="tc-breath-title" style="font-size:20px;font-weight:900;letter-spacing:1px;
            background:linear-gradient(90deg,{pal['accent']},{pal.get('purple', '#b45cff')});
-           -webkit-background-clip:text;-webkit-text-fill-color:transparent;
-           filter:drop-shadow(0 0 18px {_rgba(pal.get('purple', '#b45cff'), .35)});">📈 多智能体投研终端</div>
-      <div style="font-size:11px;color:{pal['muted']};margin-top:5px;letter-spacing:.5px;
-           background:{pal['card2']};border:1px solid {pal['border']};border-radius:20px;
+           -webkit-background-clip:text;-webkit-text-fill-color:transparent;">📈 多智能体投研终端</div>
+      <div class="tc-glitch" style="font-size:11px;color:{pal['muted']};margin-top:5px;letter-spacing:.5px;
+           background:{pal['card2']};border:1px solid {_rgba(pal.get('purple', '#b45cff'), .4)};border-radius:20px;
            display:inline-block;padding:3px 12px;">LangGraph 9-Agent · RAG 财报 · 三级降级</div>
     </div>""", unsafe_allow_html=True)
     st.markdown("---")
@@ -253,7 +253,50 @@ with st.sidebar:
 
 
 # ------------------------------------------------------------
-# 全局:分析任务运行中 → 拓扑 + 画中画 + 流水线
+# 页面渲染(含太空舱转场:切换板块时旧窗口飞出 + 光束粒子)
+# ------------------------------------------------------------
+def _render_page(pal):
+    _page = st.session_state.get("page", "dashboard")
+    # 板块切换光束(仅在板块变化时注入一次)
+    if st.session_state.get("_last_page") != _page:
+        st.session_state["_last_page"] = _page
+        st.markdown('<div class="page-beam"></div>', unsafe_allow_html=True)
+    if _page == "deep":
+        deep_analysis.render(pal)
+    elif _page == "qa":
+        qa.render(pal)
+    elif _page == "watchlist":
+        watchlist.render(pal)
+    elif _page == "history":
+        history.render(pal)
+    elif _page == "profile":
+        profile.render(pal)
+    elif _page == "admin":
+        admin.render(pal)
+    else:
+        dashboard.render(pal)
+
+
+def _compact_progress(status: dict, pal) -> None:
+    """轮询期间紧凑进度条(v4.2:不阻塞导航,随时可切板块)"""
+    stages = status.get("stages") or []
+    total = max(1, len(stages))
+    done = sum(1 for s in stages if s.get("status") in ("completed", "skipped", "failed"))
+    current = next((s for s in stages if s.get("status") == "running"), None)
+    pct = int(done / total * 100)
+    stage_txt = f"⏳ {current.get('label', '')}" if current else "⏳ 调度中…"
+    st.markdown(f'''
+    <div class="prog-wrap tc-card tc-glow" style="padding:10px 16px;">
+      <div class="prog-head"><span>🛸 深度分析进行中 · {stage_txt}</span><b style="color:{pal['accent']};">{pct}%</b></div>
+      <div class="prog-bar"><div class="prog-fill" style="width:{pct}%"></div></div>
+    </div>''', unsafe_allow_html=True)
+    # 深度研究页展示 Agent 拓扑(其余板块只显示进度条,保持轻量)
+    if st.session_state.get("page") == "deep" and stages:
+        agent_topology.render_topology(stages, live=True, height=240)
+
+
+# ------------------------------------------------------------
+# 全局:分析任务运行中 → 紧凑进度 + 仍可切换板块
 # ------------------------------------------------------------
 if st.session_state.running_task:
     try:
@@ -264,8 +307,6 @@ if st.session_state.running_task:
         status = None
 
     if status:
-        pipeline.render_pipeline(status.get("stages") or [], status.get("status"), pal)
-
         if status["status"] == "completed":
             try:
                 res = task_result(st.session_state.running_task)
@@ -288,39 +329,18 @@ if st.session_state.running_task:
             st.session_state.running_task = None
             st.rerun()
         else:
-            pc1, pc2 = st.columns([3, 1])
-            with pc1:
-                if status.get("stages"):
-                    agent_topology.render_topology(status["stages"], live=True, height=300)
-            with pc2:
-                pip_card.render(status.get("stages") or [], status["status"], pal)
+            # 进行中:紧凑进度 + 渲染当前页面(允许切换板块) + 继续轮询
+            _compact_progress(status, pal)
+            _render_page(pal)
             if st.session_state.get("fish_tank_open"):
                 from components.ui import fish_tank
                 fish_tank.render(status.get("stages") or [], height=230)
-            st.markdown('<div class="tc-skeleton"></div>', unsafe_allow_html=True)
-            st.markdown('<div class="tc-skeleton line" style="width:60%"></div>', unsafe_allow_html=True)
             time.sleep(1.2)
             st.rerun()
-    st.stop()
-
-# ------------------------------------------------------------
-# 页面路由
-# ------------------------------------------------------------
-_page = st.session_state.get("page", "dashboard")
-if _page == "deep":
-    deep_analysis.render(pal)
-elif _page == "qa":
-    qa.render(pal)
-elif _page == "watchlist":
-    watchlist.render(pal)
-elif _page == "history":
-    history.render(pal)
-elif _page == "profile":
-    profile.render(pal)
-elif _page == "admin":
-    admin.render(pal)
+    else:
+        _render_page(pal)
 else:
-    dashboard.render(pal)
+    _render_page(pal)
 
 st.markdown("---")
-st.caption("数据仅用于学习与技术演示,不构成投资建议 · 多智能体投研终端 v4.1")
+st.caption("数据仅用于学习与技术演示,不构成投资建议 · 多智能体投研终端 v4.2")

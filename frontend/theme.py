@@ -178,6 +178,7 @@ def apply_theme(theme_name: str) -> dict:
         background:{pal['card2']}; border:1px solid {border}; border-radius:11px;
         padding:9px 12px; margin:0; cursor:pointer;
         transition: all .28s {ELASTIC};
+        animation: tc-glitch 7s steps(1) infinite;   /* 故障风字体(周期性抖动) */
     }}
     [data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:hover {{
         transform: translateX(5px);
@@ -260,6 +261,25 @@ def apply_theme(theme_name: str) -> dict:
        其功能由中文顶部状态栏接管;原生 chrome 无法翻译成中文 */
     [data-testid="stToolbar"] {{ display: none !important; }}
     [data-testid="stDecoration"] {{ display: none !important; }}
+
+    /* v4.2 太空星空背景(持久层,跨 rerun 不闪烁) */
+    .stApp::before {{
+        content:""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+        background-image:
+            radial-gradient(circle at 20% 30%, rgba(140,190,255,.5) 1px, transparent 2px),
+            radial-gradient(circle at 70% 60%, rgba(180,140,255,.42) 1px, transparent 2px),
+            radial-gradient(circle at 45% 80%, rgba(255,255,255,.35) 1px, transparent 2px),
+            radial-gradient(circle at 85% 20%, rgba(140,190,255,.4) 1px, transparent 2px),
+            radial-gradient(circle at 10% 65%, rgba(180,140,255,.35) 1px, transparent 2px),
+            radial-gradient(circle at 55% 15%, rgba(255,255,255,.3) 1px, transparent 2px);
+        background-size: 260px 260px, 340px 340px, 300px 300px, 380px 380px, 220px 220px, 400px 400px;
+        animation: sp-drift 90s linear infinite;
+    }}
+    @keyframes sp-drift {{
+        from {{ background-position: 0 0, 0 0, 0 0, 0 0, 0 0, 0 0; }}
+        to {{ background-position: -260px 260px, -340px 340px, -300px 300px, -380px 380px, -220px 220px, -400px 400px; }}
+    }}
+    [data-testid="stMainBlockContainer"] {{ position: relative; z-index: 1; }}
 
     /* 滚动条 */
     ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
@@ -347,12 +367,55 @@ def apply_theme(theme_name: str) -> dict:
         100% {{ opacity: 0; transform: scale(2.1); }}
     }}
 
-    /* ---- 页面入场(v4.0:淡入 + Y上移20px) ---- */
+    /* ---- 页面入场(v4.2:太空舱转场 - 从右飞入 + 光带粒子) ---- */
     @keyframes tc-enter {{
-        from {{ opacity: 0; transform: translateY(20px); }}
-        to   {{ opacity: 1; transform: translateY(0); }}
+        0% {{ opacity: 0; transform: translateX(70px) scale(.95); filter: blur(6px); }}
+        60% {{ filter: blur(0); }}
+        100% {{ opacity: 1; transform: translateX(0) scale(1); }}
     }}
-    .tc-enter {{ animation: tc-enter .3s {ELASTIC}; }}
+    .tc-enter {{ position: relative; animation: tc-enter .55s {ELASTIC}; }}
+    .tc-enter::after {{
+        content:""; position:absolute; left:-20%; top:0; bottom:0; width:70px; pointer-events:none;
+        background: linear-gradient(90deg, transparent, {_rgba(acc, .4)}, {_rgba(purp, .3)}, transparent);
+        animation: tc-beam 1.1s {ELASTIC};
+    }}
+    @keyframes tc-beam {{ 0% {{ left:-20%; opacity:0; }} 25% {{ opacity:1; }} 100% {{ left:130%; opacity:0; }} }}
+
+    /* ---- v4.2 太空舱特效 ---- */
+    /* 呼吸灯标题 */
+    @keyframes tc-breathe {{
+        0%, 100% {{ text-shadow: 0 0 8px {_rgba(acc,.45)}, 0 0 26px {_rgba(purp,.28)}; }}
+        50% {{ text-shadow: 0 0 18px {_rgba(acc,.9)}, 0 0 48px {_rgba(purp,.6)}, 0 0 90px {_rgba(purp,.3)}; }}
+    }}
+    .tc-breath-title {{ animation: tc-breathe 2.4s ease-in-out infinite; }}
+
+    /* 导航文字故障风(周期性抖动 + RGB 分离) */
+    @keyframes tc-glitch {{
+        0%, 89%, 100% {{ text-shadow: 0 0 5px {_rgba(purp,.3)}; transform: translate(0,0); }}
+        90% {{ text-shadow: -2px 0 {_rgba(pal['danger'], .75)}, 2px 0 {_rgba(acc,.75)}; transform: translate(-1px,0); }}
+        92% {{ text-shadow: 2px 0 {_rgba(pal['danger'], .7)}, -2px 0 {_rgba(acc,.7)}; transform: translate(1px,0); }}
+        94% {{ text-shadow: -1px 0 {_rgba(pal['danger'], .55)}, 1px 0 {_rgba(acc,.55)}; transform: translate(-.5px,0); }}
+    }}
+    .tc-glitch {{ animation: tc-glitch 5s steps(1) infinite; }}
+
+    /* 太空粒子背景(由 app.py 注入 .sp-space) */
+    @keyframes sp-rise {{ 0% {{ transform: translateY(0) translateX(0); opacity:0; }} 8% {{ opacity:.75; }} 100% {{ transform: translateY(-108vh) translateX(46px); opacity:0; }} }}
+    .sp-space {{ position: fixed; inset:0; z-index:0; pointer-events:none; overflow:hidden; }}
+    .sp-space i {{ position:absolute; width:2px; height:2px; border-radius:50%;
+                  background: rgba(140,190,255,.5); animation: sp-rise linear infinite; }}
+
+    /* 页面切换光束(由 app.py 注入 .page-beam) */
+    @keyframes tc-pagebeam {{ 0% {{ left:-16%; opacity:0; }} 22% {{ opacity:1; }} 100% {{ left:116%; opacity:0; }} }}
+    .page-beam {{ position:fixed; left:0; top:0; height:100vh; width:90px; z-index:997; pointer-events:none;
+                 background: linear-gradient(90deg, transparent, {_rgba(acc,.16)}, {_rgba(purp,.12)}, transparent);
+                 animation: tc-pagebeam .75s ease-out; }}
+
+    /* 分析进度条(轮询期间紧凑进度) */
+    .prog-wrap {{ margin:6px 0 10px; }}
+    .prog-head {{ display:flex; justify-content:space-between; font-size:12px; color:{muted}; margin-bottom:6px; }}
+    .prog-bar {{ height:8px; background:{pal['border']}; border-radius:6px; overflow:hidden; }}
+    .prog-fill {{ height:100%; background:linear-gradient(90deg,{acc},{purp}); border-radius:6px;
+                 transition:width .5s {ELASTIC}; box-shadow:0 0 10px {_rgba(acc,.6)}; }}
 
     /* ---- 指数条横向滚动(marquee) ---- */
     @keyframes tc-marquee {{
