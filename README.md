@@ -1,0 +1,145 @@
+# 多智能体股票分析系统
+
+基于 **LangGraph 多智能体编排 + RAG 检索增强**的 A 股个股自动分析系统。输入股票代码,系统自动完成数据采集 → 技术分析 & 情感分析(并行) → 风险评估 → 报告生成,并在前端实时展示各 Agent 进度与 K 线走势。
+
+---
+
+## 一、系统架构
+
+```
+┌────────────────────────────── 前端 Streamlit(:8501) ─────────────────────────────┐
+│  输入股票代码 → 进度条(逐Agent) → K线图(Plotly) + 分析报告(Markdown)              │
+└───────────────────────────────────┬──────────────────────────────────────────────┘
+                                    │ SSE 流式进度 / 结果
+┌────────────────────────────── 后端 FastAPI(:8000) ───────────────────────────────┐
+│                       /analyze  /analyze/stream(SSE)                             │
+│                                                                                  │
+│   ┌─────────── LangGraph 状态机(graph/workflow.py) ────────────┐                 │
+│   │  采集(collect)                                              │                 │
+│   │   ├─▶ 技术分析(technical) ─┐                               │                 │
+│   │   └─▶ 情感分析(sentiment) ─┼─▶ 风险评估(risk) ─▶ 报告(report)│  ← 并行fan-out  │
+│   │        条件路由:新闻为空跳过情感 ────────────────────────── │                 │
+│   └──────────────┬──────────────────────────────┬─────────────┘                 │
+│                  │                              │                               │
+│   ┌──────────────▼──────────┐   ┌───────────────▼──────────────┐                │
+│   │  数据层:三级降级采集     │   │  LLM 层:可插拔后端           │                │
+│   │  AKShare→新浪→Mock      │   │  ollama / deepseek / dify    │                │
+│   │  + 东方财富新闻爬虫      │   │                              │                │
+│   └──────────────┬──────────┘   └──────────────────────────────┘                │
+│                  ▼                                                              │
+│   PostgreSQL(行情/新闻)  ChromaDB(RAG向量库, bge 中文检索)                      │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**核心设计理念:**
+- **多智能体通信靠数据契约**:所有 Agent 的输入/输出由 Pydantic 模型(`backend/schemas.py`)严格约束,坏数据进不来。
+- **模型可插拔**:`LLM_PROVIDER` 一行配置在 `ollama`(本地免费)/ `deepseek`(API 高质)/ `dify`(可视化搭建的智能体)间切换,架构上不留绑定。
+- **高可用**:数据采集三级降级(主源→备用→Mock)+ 情感失败规则兜底,单个 Agent 挂了系统不崩。
+
+---
+
+## 二、目录结构
+
+```
+stock-agent-system/
+├── backend/
+│   ├── main.py            # FastAPI: /analyze(同步) + /analyze/stream(SSE进度)
+│   ├── models.py          # SQLAlchemy 模型(行情/新闻,含联合索引)
+│   ├── schemas.py         # Pydantic 数据契约(多智能体通用语言)
+│   ├── exceptions.py      # 统一异常层级(步骤11 降级骨架)
+│   ├── logging_config.py  # 结构化 JSON 日志(Token/耗时/Agent失败)
+│   ├── agents/            # 核心单智能体
+│   │   ├── llm.py         #   LLM 调用层(ollama/deepseek/dify 可插拔)
+│   │   ├── prompts.py     #   各 Agent System Prompt
+│   │   ├── sentiment.py   #   情感分析 Agent
+│   │   ├── technical.py   #   技术分析 Agent(指标计算+解读)
+│   │   ├── risk.py        #   风险评估 Agent(含规则兜底)
+│   │   └── report.py      #   报告生成 Agent
+│   └── graph/workflow.py  # LangGraph 编排(并行+条件路由+降级)
+├── frontend/app.py        # Streamlit + Plotly 前端
+├── scripts/               # 采集与建库脚本
+│   ├── fetch_stock_data.py # 行情三级降级采集
+│   ├── fetch_news.py       # 东方财富新闻爬虫
+│   ├── build_vector_store.py # RAG 建库(500/50分块+向量化)
+│   └── view_tables.py      # 数据库表查看器(开发工具)
+├── data/rag_docs/         # RAG 语料(贵州茅台年度报告 PDF)
+├── tests/                 # pytest(15 用例)
+├── requirements.txt / Dockerfile / docker-compose.yml
+└── .env.example           # 环境配置模板(复制为 .env)
+```
+
+---
+
+## 三、快速开始
+
+### 方式 A:本地运行(开发)
+
+**前置**:Python 3.11、PostgreSQL(本机或容器)、Ollama(qwen2.5:3b + bge 模型)。
+
+```bash
+# 1. 安装依赖
+pip install -r requirements.txt
+
+# 2. 配置环境
+cp .env.example .env        # 按需改 LLM_PROVIDER、数据库等
+
+# 3. 建表 + 采集 + RAG(可选)
+python backend/models.py            # 建表
+python scripts/fetch_stock_data.py  # 采集行情
+python scripts/fetch_news.py        # 采集新闻
+python scripts/build_vector_store.py # 构建 RAG 库
+
+# 4. 启动后端 + 前端
+uvicorn backend.main:app --port 8000
+streamlit run frontend/app.py
+```
+
+浏览器打开 `http://localhost:8501`,输入 `600519` 点开始分析。
+
+### 方式 B:Docker 一键部署
+
+```bash
+docker compose up -d --build
+# 访问 http://localhost:8000/health 确认后端就绪
+```
+(LLM 走宿主机 Ollama,容器经 `host.docker.internal:11434` 访问)
+
+---
+
+## 四、dify 接入(可选,作 Agent 的 LLM 后端)
+
+在 dify 平台搭建 4 个工作流应用(情感/技术/风险/报告),详见 `dify的详细操作.md`。搭好后:
+
+```env
+LLM_PROVIDER=dify
+DIFY_BASE_URL=http://localhost/v1
+DIFY_APP_ID=app-xxxxxx
+DIFY_API_KEY=app-xxxxx.xxxx
+```
+
+---
+
+## 五、测试
+
+```bash
+pytest tests/ -v     # 15 个用例:模型校验/指标计算/降级链/规则兜底
+```
+
+---
+
+## 六、技术栈
+
+| 领域 | 选型 |
+|---|---|
+| 多智能体编排 | LangGraph(状态机,并行 fan-out + 条件路由) |
+| LLM | 本地 Ollama(qwen2.5:3b)/ DeepSeek API / dify(可插拔) |
+| 向量检索 | ChromaDB + BGE(bge-large-zh-v1.5 本地平替) |
+| 数据 | AKShare(三级降级)、东方财富爬虫、PostgreSQL |
+| 后端/前端 | FastAPI(SSE)、Streamlit + Plotly |
+| 工程化 | pytest、Docker Compose、结构化 JSON 日志 |
+
+---
+
+## 七、免责声明
+
+本系统仅用于学习与技术演示,不构成任何投资建议。
