@@ -17,6 +17,7 @@ FastAPI 后端入口(步骤13 + 专业看板升级)
 启动: uvicorn backend.main:app --reload --port 8000
 前端: streamlit run frontend/app.py
 """
+import io
 import json
 import logging
 import os
@@ -25,15 +26,16 @@ from datetime import date, datetime, timedelta
 from typing import List, Optional
 
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 
 from .graph.workflow import _load_latest_quotes, build_workflow
 from .models import StockPrice, User, Watchlist, engine
 from .models import SessionLocal
 from .services import history_service, stock_meta
+from .services import qa as qa_service
 from .services.auth import (
     create_token,
     get_current_user,
@@ -54,6 +56,26 @@ task_manager = TaskManager()
 
 # 启动时编译一次工作流,复用实例(SSE 兼容接口用)
 _graph = build_workflow()
+
+# ------------------------------------------------------------
+# API 调用统计(第六批:监控)
+# ------------------------------------------------------------
+API_STATS: dict = {"total": 0, "by_path": {}}
+
+
+@app.middleware("http")
+async def _count_api(request: Request, call_next):
+    API_STATS["total"] += 1
+    path = request.url.path
+    API_STATS["by_path"][path] = API_STATS["by_path"].get(path, 0) + 1
+    return await call_next(request)
+
+
+def get_admin_user(user: User = Depends(get_current_user)) -> User:
+    """管理员权限依赖:非 admin 一律 403"""
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    return user
 
 
 class AnalyzeRequest(BaseModel):
@@ -85,6 +107,16 @@ class ProfileUpdateRequest(BaseModel):
 
 class WatchlistAddRequest(BaseModel):
     stock_code: str
+
+
+class ChatRequest(BaseModel):
+    session_id: Optional[str] = None
+    message: str
+
+
+class UserAdminUpdate(BaseModel):
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 def _initial_state(code: str, mode: str = "full") -> dict:
@@ -260,6 +292,11 @@ def _startup():
         _seed_admin()
     except Exception as e:
         logger.warning("启动建表/种子初始化失败(不影响进程启动): %s", e)
+    try:
+        from .services.scheduler import start_scheduler
+        start_scheduler()        # 第二批:定时数据采集(每日+每6小时)
+    except Exception as e:
+        logger.warning("数据调度器启动失败(不影响服务): %s", e)
 
 
 # ------------------------------------------------------------
@@ -404,6 +441,170 @@ def watchlist_delete(stock_code: str, user: User = Depends(get_current_user)):
             Watchlist.user_id == user.id, Watchlist.stock_code == stock_code))
         session.commit()
     return {"ok": True}
+
+
+# ------------------------------------------------------------
+# 第二批:基本面数据
+# ------------------------------------------------------------
+@app.get("/stock/fundamentals")
+def stock_fundamentals(code: str = "600519"):
+    """基本面 + 估值数据(最佳努力 AKShare,失败返回 None 与数据源标记)"""
+    fund, val = None, None
+    source = "none"
+    try:
+        import akshare as ak
+        try:
+            df = ak.stock_financial_analysis_indicator(symbol=code, start_year="2023")
+            if df is not None and not df.empty:
+                last = df.iloc[-1]
+                fund = {"revenue_growth": _f2(last.get("主营业务收入增长率")),
+                        "roe": _f2(last.get("净资产收益率")),
+                        "profit_margin": _f2(last.get("销售净利率"))}
+        except Exception as e:
+            logger.debug("fundamentals 财务数据失败: %s", e)
+        try:
+            df2 = ak.stock_a_indicator_lg(symbol=code)
+            if df2 is not None and not df2.empty:
+                last = df2.iloc[-1]
+                pe = _f2(last.get("pe_ttm"))
+                pe_series = df2["pe_ttm"].dropna()
+                val = {"pe": pe, "pb": _f2(last.get("pb")),
+                       "pe_percentile": round(float((pe_series <= pe).mean()), 3)
+                       if pe is not None and len(pe_series) else None}
+        except Exception as e:
+            logger.debug("fundamentals 估值数据失败: %s", e)
+        if fund or val:
+            source = "real"
+    except Exception as e:
+        logger.warning("/stock/fundamentals 失败: %s", e)
+    return {"code": code, "fundamental": fund, "valuation": val, "data_source": source}
+
+
+# ------------------------------------------------------------
+# 第五批:RAG 智能问答"股小智"
+# ------------------------------------------------------------
+@app.post("/chat")
+def chat(req: ChatRequest, user: User = Depends(get_current_user)):
+    """RAG 问答:检索知识库 + 多轮上下文 + LLM 回答(引用来源)"""
+    session_id = req.session_id or qa_service.new_session_id()
+    if not req.message.strip():
+        raise HTTPException(status_code=400, detail="问题不能为空")
+    return qa_service.answer_question(user.id, session_id, req.message.strip())
+
+
+@app.get("/chat/history")
+def chat_history(session_id: str, user: User = Depends(get_current_user)):
+    """某会话的完整对话记录"""
+    return {"items": qa_service.list_history(user.id, session_id)}
+
+
+@app.post("/chat/upload")
+async def chat_upload(file: UploadFile = File(...), user: User = Depends(get_current_user)):
+    """上传 PDF/TXT 扩充知识库(第五批);入库带超时熔断,避免 embedding 服务不可用时挂死"""
+    data = await file.read()
+    filename = file.filename or "doc"
+    try:
+        if filename.lower().endswith(".pdf"):
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            text = "\n".join((p.extract_text() or "") for p in reader.pages)
+        else:
+            text = data.decode("utf-8", errors="ignore")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"文档解析失败: {e}")
+
+    import concurrent.futures
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(qa_service.ingest_document, text, filename)
+    try:
+        chunks = future.result(timeout=90)
+    except concurrent.futures.TimeoutError:
+        logger.warning("知识库入库超时(embedding 服务不可用?)")
+        raise HTTPException(status_code=504, detail="文档入库超时:向量化服务不可用")
+    except Exception as e:
+        logger.warning("知识库上传失败: %s", e)
+        raise HTTPException(status_code=500, detail=f"文档入库失败: {e}")
+    finally:
+        executor.shutdown(wait=False)
+    return {"ok": True, "chunks": chunks, "source": filename}
+
+
+# ------------------------------------------------------------
+# 第六批:管理后台(仅管理员)
+# ------------------------------------------------------------
+@app.get("/admin/users")
+def admin_users(_: User = Depends(get_admin_user)):
+    """用户列表(含禁用状态)"""
+    with SessionLocal() as session:
+        rows = session.scalars(select(User).order_by(User.created_at.desc())).all()
+    return {"items": [{
+        "id": u.id, "username": u.username, "email": u.email, "role": u.role,
+        "is_active": bool(u.is_active),
+        "created_at": u.created_at.strftime("%Y-%m-%d %H:%M:%S") if u.created_at else None,
+        "last_login": u.last_login.strftime("%Y-%m-%d %H:%M:%S") if u.last_login else None,
+    } for u in rows]}
+
+
+@app.put("/admin/users/{user_id}")
+def admin_update_user(user_id: int, req: UserAdminUpdate, admin: User = Depends(get_admin_user)):
+    """修改用户角色 / 启用禁用"""
+    with SessionLocal() as session:
+        u = session.get(User, user_id)
+        if u is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if user_id == admin.id:
+            raise HTTPException(status_code=400, detail="不能修改自己")
+        if req.role is not None:
+            u.role = req.role if req.role in ("admin", "user") else u.role
+        if req.is_active is not None:
+            u.is_active = req.is_active
+        session.add(u)
+        session.commit()
+    return {"ok": True, "id": user_id, "role": u.role, "is_active": bool(u.is_active)}
+
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: int, admin: User = Depends(get_admin_user)):
+    """删除用户(连带自选股/历史/对话)"""
+    if user_id == admin.id:
+        raise HTTPException(status_code=400, detail="不能删除自己")
+    from .models import ChatHistory, History
+    with SessionLocal() as session:
+        session.execute(delete(Watchlist).where(Watchlist.user_id == user_id))
+        session.execute(delete(History).where(History.user_id == user_id))
+        session.execute(delete(ChatHistory).where(ChatHistory.user_id == user_id))
+        u = session.get(User, user_id)
+        if u is None:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        session.delete(u)
+        session.commit()
+    return {"ok": True, "id": user_id}
+
+
+@app.get("/admin/stats")
+def admin_stats(_: User = Depends(get_admin_user)):
+    """系统监控:用户数/分析任务/API 调用/LLM token 消耗/数据源"""
+    from .agents import llm as llm_mod
+    with SessionLocal() as session:
+        users = session.scalar(select(func.count(User.id))) or 0
+        from .models import History
+        tasks = session.scalar(select(func.count(History.id))) or 0
+    return {
+        "users": users, "analysis_tasks": tasks,
+        "api_calls": API_STATS.get("total", 0),
+        "api_by_path": dict(sorted(API_STATS.get("by_path", {}).items(), key=lambda kv: -kv[1])[:10]),
+        "llm_stats": llm_mod.get_llm_stats(),
+        "scheduler": "running",
+    }
+
+
+@app.post("/admin/data/refresh")
+def admin_data_refresh(_: User = Depends(get_admin_user)):
+    """手动触发数据采集(自选股行情+新闻)"""
+    from .services.scheduler import _collect_watchlist_stocks
+    _INDEX_CACHE.update({"ts": 0.0, "data": None})  # 清除指数缓存
+    n = _collect_watchlist_stocks()
+    return {"ok": True, "stocks_refreshed": n}
 
 
 # ------------------------------------------------------------

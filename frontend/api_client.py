@@ -144,3 +144,57 @@ def task_status(task_id: str) -> dict:
 
 def task_result(task_id: str) -> dict:
     return _request("GET", "/task/result", params={"task_id": task_id}, timeout=10)
+
+
+# ------------------------------------------------------------
+# RAG 智能问答(第五批)
+# ------------------------------------------------------------
+def chat(session_id: str, message: str, token: str) -> dict:
+    return _request("POST", "/chat", json_body={"session_id": session_id, "message": message},
+                    token=token, timeout=60)
+
+
+def chat_history(session_id: str, token: str) -> dict:
+    return _request("GET", "/chat/history", params={"session_id": session_id}, token=token)
+
+
+def upload_doc(file_bytes: bytes, filename: str, token: str) -> dict:
+    try:
+        resp = requests.post(
+            f"{API_BASE}/chat/upload", files={"file": (filename, file_bytes)},
+            headers={"Authorization": f"Bearer {token}"}, timeout=120)
+        if resp.status_code == 401:
+            raise ApiError("登录已过期,请重新登录", status_code=401)
+        resp.raise_for_status()
+        return resp.json()
+    except requests.exceptions.RequestException as e:
+        raise ApiError(f"上传失败: {e}") from e
+
+
+# ------------------------------------------------------------
+# 基本面(第二批) / 管理后台(第六批)
+# ------------------------------------------------------------
+def stock_fundamentals(code: str) -> dict:
+    return _request("GET", "/stock/fundamentals", params={"code": code})
+
+
+def admin_users(token: str) -> dict:
+    return _request("GET", "/admin/users", token=token)
+
+
+def admin_update_user(token: str, user_id: int, role: str | None = None,
+                      is_active: bool | None = None) -> dict:
+    return _request("PUT", f"/admin/users/{user_id}",
+                    json_body={"role": role, "is_active": is_active}, token=token)
+
+
+def admin_delete_user(token: str, user_id: int) -> dict:
+    return _request("DELETE", f"/admin/users/{user_id}", token=token)
+
+
+def admin_stats(token: str) -> dict:
+    return _request("GET", "/admin/stats", token=token)
+
+
+def admin_data_refresh(token: str) -> dict:
+    return _request("POST", "/admin/data/refresh", token=token, timeout=120)

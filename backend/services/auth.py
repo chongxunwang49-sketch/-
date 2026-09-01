@@ -122,4 +122,6 @@ def get_current_user(authorization: str = Header(default="")) -> User:
     user = get_user_by_id(int(payload.get("sub", 0)))
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在")
+    if not getattr(user, "is_active", True):
+        raise HTTPException(status_code=403, detail="账号已被禁用,请联系管理员")
     return user

@@ -54,7 +54,15 @@
 | `GET /market/indices` | 市场指数行情条(上证/深证/创业板/沪深300/恒生/标普,东财实时→新浪日线兜底) |
 | `GET /stock/info?code=600519` | 基础信息(名称/现价/涨跌幅/技术指标快照) |
 | `GET /stock/history?code=600519&range=3m` | K线历史(含 MA/MACD/RSI/BOLL 序列;`range=1m/3m/6m/1y/custom`) |
+| `GET /stock/fundamentals?code=` | 基本面 + 估值数据(PE/PB/ROE/营收增速,最佳努力) |
 | `GET /stock/news?code=600519` | 个股新闻列表 |
+| `POST /chat` | RAG 智能问答(多轮 + 引用来源,第五批) |
+| `GET /chat/history?session_id=` | 会话对话记录 |
+| `POST /chat/upload` | 上传 PDF/TXT 扩充知识库 |
+| `GET /admin/users` | 用户列表(管理员) |
+| `PUT/DELETE /admin/users/{id}` | 改角色/启禁用 / 删除用户(管理员) |
+| `GET /admin/stats` | 系统监控(用户/任务/API/Token,管理员) |
+| `POST /admin/data/refresh` | 手动触发数据采集(管理员) |
 | `POST /analyze` | 异步启动分析(需 Bearer,自动写入分析历史),`{stock_code, mode}` |
 | `GET /task/status?task_id=...` | 轮询任务状态(各 Agent 阶段/耗时/降级标记) |
 | `GET /task/result?task_id=...` | 最终报告 + 全部中间数据 + LLM token 统计 |
@@ -64,6 +72,10 @@
 **用户体系**:bcrypt 密码散列 + JWT(HS256) 认证;首次启动自动创建管理员 `admin/admin123`(可用 `ADMIN_USERNAME/ADMIN_PASSWORD` 覆盖);`/analyze` 需登录,完成后写入该用户 `analysis_history`。
 **分析模式**:`full` = 完整链路(采集 → 技术∥情感∥基本面→估值∥资金∥行业∥事件 → 风险 → 报告+RAG,9 个 Agent 并行);`quick` = 仅技术→风险→报告(最快)。
 **超时熔断**:单个分析 Agent 超过 30 秒未返回自动跳过并标记(第四批),保证整体不卡死。
+**多市场(第二批)**:`/stock/history` 与采集链支持 港股(5位数字代码) / 美股(字母代码),数据源不足时自动 Mock 降级。
+**定时调度(第二批)**:APScheduler 每日 08:30 + 每 6 小时自动为自选股刷新行情/新闻。
+**RAG 问答(第五批)**:`/chat` 检索 ChromaDB 知识库 + 多轮上下文 + LLM 回答(引用来源);支持上传 PDF/TXT 扩充语料;前端"智能问答"页含"深度研究"一键转多 Agent 分析。
+**管理后台(第六批)**:`/admin/*` 接口(用户管理/系统监控/手动采集);Docker Compose 含 `postgres + chroma + backend + frontend + redis + nginx`(nginx 提供统一入口 `8080`,可选)。
 
 ---
 

@@ -15,7 +15,7 @@ import os
 from datetime import date, datetime
 
 from dotenv import load_dotenv
-from sqlalchemy import Date, DateTime, Float, Index, Integer, String, Text, create_engine
+from sqlalchemy import Boolean, Date, DateTime, Float, Index, Integer, String, Text, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 # 加载项目根目录下的 .env(文件不存在时自动使用下方默认值)
@@ -97,6 +97,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(128), nullable=False, comment="bcrypt 密码散列")
     email: Mapped[str] = mapped_column(String(120), nullable=True, comment="邮箱(可选)")
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", comment="admin/user")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, comment="是否启用(管理员可禁用)")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now, comment="注册时间")
     last_login: Mapped[datetime] = mapped_column(DateTime, nullable=True, comment="最近登录")
 
@@ -147,6 +148,16 @@ class ChatHistory(Base):
 def create_tables() -> None:
     """按模型定义在 PostgreSQL 中建表(幂等,表已存在则跳过)"""
     Base.metadata.create_all(bind=engine)
+    # 轻量迁移:为已存在的表补齐新列(幂等;避免"已有表缺列"导致 ORM 查询失败)
+    _migrations = [
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+    ]
+    for sql in _migrations:
+        try:
+            with engine.begin() as conn:
+                conn.execute(text(sql))
+        except Exception as e:  # 表不存在等场景忽略
+            print(f"迁移跳过({sql[:40]}...): {e}")
     print("建表完成: stock_price、news_article、users、watchlist、analysis_history、chat_history")
 
 

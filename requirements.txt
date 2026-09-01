@@ -36,6 +36,9 @@ python-dotenv==1.2.3
 bcrypt==4.3.0          # 密码散列
 PyJWT==2.10.1          # JWT 身份认证
 
+# --- 定时调度(第二批) ---
+APScheduler==3.11.0    # 数据定时采集
+
 # --- Embedding(本地 BGE-M3)---
 sentence-transformers==6.0.0
 

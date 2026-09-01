@@ -144,13 +144,66 @@ def _fetch_mock_data(stock_code: str, days: int) -> pd.DataFrame:
     return df
 
 
+def _detect_market(stock_code: str) -> str:
+    """按代码格式识别市场:a=A股(6位数字) hk=港股(5位数字) us=美股(字母)"""
+    code = str(stock_code).strip().lower()
+    if code.startswith(("sh", "sz", "bj")):
+        return "a"
+    if code.isdigit():
+        return "hk" if len(code) == 5 else "a"
+    return "us"
+
+
+def _fetch_hk_us(stock_code: str, days: int) -> pd.DataFrame:
+    """港股/美股日线(东财通道,第二批复支持)"""
+    code = stock_code.strip().upper()
+    end = date.today()
+    start = end - timedelta(days=days)
+    try:
+        import akshare as ak
+        df = ak.stock_hk_hist(symbol=code, period="daily",
+                              start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+                              adjust="qfq")
+        if df is not None and not df.empty:
+            df = df.rename(columns={"日期": "date", "开盘": "open_price", "收盘": "close_price",
+                                    "最高": "high_price", "最低": "low_price", "成交量": "volume"})
+            df["stock_code"] = code
+            return df
+        # 美股
+        df = ak.stock_us_hist(symbol=code, period="daily",
+                              start_date=start.strftime("%Y%m%d"), end_date=end.strftime("%Y%m%d"),
+                              adjust="qfq")
+        if df is not None and not df.empty:
+            df = df.rename(columns={"日期": "date", "开盘": "open_price", "收盘": "close_price",
+                                    "最高": "high_price", "最低": "low_price", "成交量": "volume"})
+            df["stock_code"] = code
+            return df
+    except Exception:
+        pass
+    raise ConnectionError(f"{code} 港股/美股数据不可用")
+
+
 def fetch_stock_with_degradation(stock_code: str = "600519", days: int = 90) -> dict:
     """
     带多级降级和重试机制的主采集函数(核心亮点)
     返回: {"status": "success"|"degraded", "source": "real"|"backup"|"mock", "rows": 入库条数, ...}
+    第二批:支持 港股(5位数字)/美股(字母) 多市场。
     """
     global DATA_SOURCE
     DATA_SOURCE = "real"  # 每次采集复位标记,防止上次 mock 状态污染本次结果
+
+    # 多市场:港股/美股走专用通道(失败直接 Mock,不再回退 A股通道)
+    if _detect_market(stock_code) in ("hk", "us"):
+        try:
+            df = _fetch_hk_us(stock_code, days)
+            DATA_SOURCE = "real"
+            rows = _save_to_db(df, session=None)
+            return {"status": "success", "source": DATA_SOURCE, "rows": rows, "market": "hk/us"}
+        except Exception as e:
+            logger.error("港股/美股采集失败: %s", e)
+            df = _fetch_mock_data(stock_code, days)
+            rows = _save_to_db(df, session=None)
+            return {"status": "degraded", "source": "mock", "rows": rows, "message": "港股/美股不可用,输出模拟数据"}
 
     for attempt in range(3):  # 主通道带重试(指数退避)
         try:

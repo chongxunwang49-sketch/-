@@ -27,18 +27,20 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from api_client import ApiError, health, start_analysis, task_result, task_status
 from components import pipeline
 from data_layer import clear_all_cached
-from page_views import dashboard, deep_analysis, history, watchlist
+from page_views import admin, dashboard, deep_analysis, history, qa, watchlist
 from stock_map import COMMON_STOCKS, lookup_name
 from theme import apply_theme
 
 st.set_page_config(page_title="多智能体股票投研终端", page_icon="📈", layout="wide")
 
-# 导航菜单: 显示文案 -> 页面 key
+# 导航菜单: 显示文案 -> 页面 key(管理后台仅管理员可见)
 NAV_MENU = {
     "📊 行情看板": "dashboard",
     "📈 深度分析": "deep",
+    "🤖 智能问答": "qa",
     "⭐ 自选股": "watchlist",
     "📋 历史记录": "history",
+    "⚙️ 管理后台": "admin",
 }
 
 # ------------------------------------------------------------
@@ -138,8 +140,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown(f'<div style="font-size:12px;color:{pal["muted"]};">🧭 导航</div>', unsafe_allow_html=True)
-    st.radio("导航", list(NAV_MENU.keys()), key="nav_radio")
-    st.session_state.page = NAV_MENU.get(st.session_state.nav_radio, "dashboard")
+    _menu = dict(NAV_MENU)
+    if (st.session_state.user or {}).get("role") != "admin":
+        _menu.pop("⚙️ 管理后台", None)   # 非管理员不显示管理后台入口
+    st.radio("导航", list(_menu.keys()), key="nav_radio")
+    st.session_state.page = _menu.get(st.session_state.nav_radio, "dashboard")
 
     st.markdown("---")
     running = st.session_state.running_task is not None
@@ -251,9 +256,13 @@ if st.session_state.running_task:
 _page = st.session_state.get("page", "dashboard")
 if _page == "deep":
     deep_analysis.render(pal)
+elif _page == "qa":
+    qa.render(pal)
 elif _page == "watchlist":
     watchlist.render(pal)
 elif _page == "history":
     history.render(pal)
+elif _page == "admin":
+    admin.render(pal)
 else:
     dashboard.render(pal)
