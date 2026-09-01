@@ -92,6 +92,19 @@ def _auth_css(pal: dict) -> str:
     [data-testid="stFormSubmitButton"] button {{ animation: auth-pulse 1.8s infinite; }}
     /* 显示密码 / 快捷登录等小按钮 */
     .stCheckbox label {{ color: {pal['muted']} !important; font-size: 12px !important; }}
+    /* 登录卡内次级按钮:等高 + 内容居中(注册/忘记密码/快捷登录 视觉对称) */
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] button,
+    [data-testid="stColumn"]:nth-child(2) > [data-testid="stVerticalBlock"] > [data-testid="stButton"] button {{
+        height: 40px; display: flex; align-items: center; justify-content: center;
+        background: rgba(79, 140, 255, .10);
+        border: 1px solid rgba(79, 140, 255, .3) !important;
+        color: {fg} !important; font-weight: 600;
+        transition: all .25s cubic-bezier(0.34,1.56,0.64,1);
+    }}
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] button:hover {{
+        background: rgba(79, 140, 255, .2); border-color: {pal['accent']} !important;
+        transform: translateY(-1px);
+    }}
     </style>
     """
 
@@ -150,6 +163,12 @@ def render_auth(pal: dict):
                     unsafe_allow_html=True)
 
 
+def _fill_admin():
+    """on_click 回调:在 widget 实例化前填充(Streamlit 禁止实例化后改 widget 值)"""
+    st.session_state["auth_username"] = "admin"
+    st.session_state["auth_password"] = "admin123"
+
+
 def _render_login(pal: dict):
     show = st.checkbox("显示密码", key="auth_show_pw")
     pw_type = "default" if show else "password"
@@ -170,19 +189,19 @@ def _render_login(pal: dict):
             except ApiError as e:
                 st.error(f"登录失败:{e.message}")
 
+    # 对称双按钮:注册 / 忘记密码
     c1, c2 = st.columns(2)
-    if c1.button("注册新账号", use_container_width=True):
-        st.session_state["auth_mode"] = "register"
-        st.rerun()
-    if c2.button("忘记密码", use_container_width=True):
-        st.toast("请联系管理员重置密码(演示占位)", icon="🔒")
+    with c1:
+        if st.button("📝 注册新账号", use_container_width=True):
+            st.session_state["auth_mode"] = "register"
+            st.rerun()
+    with c2:
+        if st.button("🔓 忘记密码", use_container_width=True):
+            st.toast("请联系管理员重置密码(演示占位)", icon="🔒")
 
-    # 管理员快捷登录:一键填充 admin/admin123
-    if st.button("👑 管理员快捷登录(演示)", use_container_width=True):
-        st.session_state["auth_username"] = "admin"
-        st.session_state["auth_password"] = "admin123"
+    # 管理员快捷登录(on_click 回调填充,规避"widget 已实例化"限制)
+    if st.button("👑 管理员快捷登录(演示)", use_container_width=True, on_click=_fill_admin):
         st.toast("已填充 admin/admin123,点击「登 录」即可", icon="✨")
-        st.rerun()
     st.markdown('<div class="auth-demo">演示账号: admin / admin123</div>', unsafe_allow_html=True)
 
 
