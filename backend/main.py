@@ -20,6 +20,7 @@ FastAPI 后端入口(步骤13 + 专业看板升级)
 import json
 import logging
 import os
+import time
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -426,6 +427,91 @@ def stock_info(code: str = "600519"):
         "low": latest.low_price, "volume": latest.volume,
         "data_source": "db", "indicators": _latest_indicators(code),
     }
+
+
+# 市场指数行情条缓存(5 分钟内复用,避免每次看板刷新都触发 AKShare)
+_INDEX_CACHE: dict = {"ts": 0.0, "data": None}
+
+
+@app.get("/market/indices")
+def market_indices():
+    """市场指数行情条:上证/深证/创业板/沪深300/恒生/标普500。
+    优先实时抓取(A股指数),失败返回缓存或 None 占位,source 标记数据新鲜度。"""
+    now = time.time()
+    if _INDEX_CACHE["data"] and now - _INDEX_CACHE["ts"] < 300:
+        return _INDEX_CACHE["data"]
+
+    base = [
+        {"code": "sh000001", "name": "上证指数"},
+        {"code": "sz399001", "name": "深证成指"},
+        {"code": "sz399006", "name": "创业板指"},
+        {"code": "sh000300", "name": "沪深300"},
+        {"code": "hkHSI", "name": "恒生指数"},
+        {"code": "usSPX", "name": "标普500"},
+    ]
+    prices = {i["name"]: {"price": None, "pct": None} for i in base}
+    source = "no_data"
+    # 新浪日线兜底符号表:A股三大指数
+    sina_symbols = {"上证指数": "sh000001", "深证成指": "sz399001", "创业板指": "sz399006"}
+    try:
+        import akshare as ak
+        spot = ak.stock_zh_index_spot_em()          # A股指数实时(东财)
+        for _, row in spot.iterrows():
+            name = str(row.get("名称", ""))
+            if name in prices:
+                prices[name] = {"price": _f2(row.get("最新价")), "pct": _f2(row.get("涨跌幅"))}
+        source = "real"
+    except Exception as e:
+        logger.warning("/market/indices 东财实时抓取失败,改用新浪日线兜底: %s", e)
+        source = "no_data"
+        try:
+            import akshare as ak
+            for name, symbol in sina_symbols.items():
+                df = ak.stock_zh_index_daily(symbol=symbol)   # 新浪通道(与行情采集备用源同源)
+                if df is not None and len(df) >= 2:
+                    last, prev = df["close"].iloc[-1], df["close"].iloc[-2]
+                    prices[name] = {"price": _f2(last),
+                                    "pct": _f2((last / prev - 1) * 100)}
+            if any(v["price"] is not None for v in prices.values()):
+                source = "backup"
+        except Exception as e2:
+            logger.warning("/market/indices 新浪日线兜底也失败: %s", e2)
+
+    # 恒生/标普:尝试,失败保留 None
+    try:
+        import akshare as ak
+        hk = ak.stock_hk_index_spot_sina()           # 恒生指数
+        for _, row in hk.iterrows():
+            nm = str(row.get("名称", ""))
+            if "恒生" in nm and "恒生" in prices:
+                prices["恒生指数"] = {"price": _f2(row.get("最新价")), "pct": _f2(row.get("涨跌幅"))}
+    except Exception as e:
+        logger.debug("/market/indices 恒生抓取失败(忽略): %s", e)
+
+    data = {"items": [{**i, "price": prices[i["name"]]["price"],
+                       "pct": prices[i["name"]]["pct"]} for i in base],
+            "source": source, "updated_at": datetime.now().strftime("%H:%M:%S")}
+    _INDEX_CACHE.update({"ts": now, "data": data})
+    return data
+
+
+@app.get("/stock/news")
+def stock_news(code: str = "600519", limit: int = 10):
+    """个股新闻列表(来自 NewsArticle 表,供舆情 Tab/看板)"""
+    from .models import NewsArticle
+    with engine.connect() as conn:
+        rows = conn.execute(
+            select(NewsArticle)
+            .where(NewsArticle.stock_code == code)
+            .order_by(NewsArticle.publish_time.desc())
+            .limit(limit)
+        ).all()
+    return {"items": [{
+        "title": r.title,
+        "content": (r.content or "")[:200],
+        "publish_time": str(r.publish_time)[:19] if r.publish_time else None,
+        "source": r.source or "",
+    } for r in rows]}
 
 
 @app.get("/stock/history")

@@ -51,8 +51,10 @@
 | `PUT /user/profile` | 更新资料/改密码(需 Bearer) |
 | `GET /user/history` | 我的分析历史(需 Bearer) |
 | `GET/POST/DELETE /user/watchlist` | 自选股管理(需 Bearer) |
+| `GET /market/indices` | 市场指数行情条(上证/深证/创业板/沪深300/恒生/标普,东财实时→新浪日线兜底) |
 | `GET /stock/info?code=600519` | 基础信息(名称/现价/涨跌幅/技术指标快照) |
 | `GET /stock/history?code=600519&range=3m` | K线历史(含 MA/MACD/RSI/BOLL 序列;`range=1m/3m/6m/1y/custom`) |
+| `GET /stock/news?code=600519` | 个股新闻列表 |
 | `POST /analyze` | 异步启动分析(需 Bearer,自动写入分析历史),`{stock_code, mode}` |
 | `GET /task/status?task_id=...` | 轮询任务状态(各 Agent 阶段/耗时/降级标记) |
 | `GET /task/result?task_id=...` | 最终报告 + 全部中间数据 + LLM token 统计 |
@@ -87,13 +89,15 @@ stock-agent-system/
 │   │   ├── auth.py         # 用户认证(bcrypt + JWT + 密码强度)
 │   │   └── history_service.py # 分析历史落库 + 综合评分
 │   └── graph/workflow.py  # LangGraph 编排(并行+条件路由+降级)
-├── frontend/              # Streamlit 专业投研终端
-│   ├── app.py             # 主页面(登录门禁 + 侧边栏 + 行情卡 + K线 + 5个Tab)
+├── frontend/              # Streamlit 专业投研终端(导航壳 + 多页面)
+│   ├── app.py             # 入口:登录门禁 + 侧边栏导航 + 全局流水线轮询 + 页面路由
 │   ├── auth_ui.py         # 登录/注册页(暗色粒子动画 + 密码强度)
 │   ├── api_client.py      # 后端 API 客户端(认证 + 异步轮询)
+│   ├── data_layer.py      # 共享数据缓存(行情/指数,带 TTL)
 │   ├── stock_map.py       # A股标的映射(前端副本)
 │   ├── theme.py           # 暗色/亮色主题 + 全局 CSS
-│   └── components/        # 图表/流水线/报告卡片组件
+│   ├── components/        # 图表/流水线/报告卡片组件
+│   └── page_views/        # 页面:行情看板 / 深度分析 / 自选股 / 历史记录
 ├── .streamlit/config.toml # Streamlit 暗色主题
 ├── scripts/               # 采集与建库脚本
 │   ├── fetch_stock_data.py # 行情三级降级采集

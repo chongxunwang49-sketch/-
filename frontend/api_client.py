@@ -69,6 +69,15 @@ def stock_history(code: str, time_range: str = "3m",
                     params={"code": code, "range": time_range, "start": start, "end": end})
 
 
+def stock_news(code: str, limit: int = 10) -> dict:
+    return _request("GET", "/stock/news", params={"code": code, "limit": limit})
+
+
+def market_indices() -> dict:
+    """市场指数行情条(上证/深证/创业板/沪深300/恒生/标普500)"""
+    return _request("GET", "/market/indices", timeout=25)
+
+
 # ------------------------------------------------------------
 # 认证接口
 # ------------------------------------------------------------
