@@ -92,17 +92,15 @@ def _auth_css(pal: dict) -> str:
     [data-testid="stFormSubmitButton"] button {{ animation: auth-pulse 1.8s infinite; }}
     /* 显示密码 / 快捷登录等小按钮 */
     .stCheckbox label {{ color: {pal['muted']} !important; font-size: 12px !important; }}
-    /* 登录卡内次级按钮:等高 + 内容居中(注册/忘记密码/快捷登录 视觉对称) */
-    [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] button,
-    [data-testid="stColumn"]:nth-child(2) > [data-testid="stVerticalBlock"] > [data-testid="stButton"] button {{
-        height: 40px; display: flex; align-items: center; justify-content: center;
-        background: rgba(79, 140, 255, .10);
-        border: 1px solid rgba(79, 140, 255, .3) !important;
-        color: {fg} !important; font-weight: 600;
+    /* 登录卡次级按钮(注册/忘记密码/快捷登录):等高 + 去双框。
+       背景/描边交给全局主题,这里只保证等宽等高、去掉 streamlit 默认
+       box-shadow 描边(border+shadow 叠加会形成"双框") */
+    [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] button {{
+        height: 40px;
+        box-shadow: none !important;
         transition: all .25s cubic-bezier(0.34,1.56,0.64,1);
     }}
     [data-testid="stColumn"]:nth-child(2) [data-testid="stButton"] button:hover {{
-        background: rgba(79, 140, 255, .2); border-color: {pal['accent']} !important;
         transform: translateY(-1px);
     }}
     </style>
@@ -189,14 +187,14 @@ def _render_login(pal: dict):
             except ApiError as e:
                 st.error(f"登录失败:{e.message}")
 
-    # 对称双按钮:注册 / 忘记密码
+    # 对称双按钮:注册 / 忘记密码(文案等长,完全对称)
     c1, c2 = st.columns(2)
     with c1:
-        if st.button("📝 注册新账号", use_container_width=True):
+        if st.button("📝 注册账号", use_container_width=True):
             st.session_state["auth_mode"] = "register"
             st.rerun()
     with c2:
-        if st.button("🔓 忘记密码", use_container_width=True):
+        if st.button("🔒 忘记密码", use_container_width=True):
             st.toast("请联系管理员重置密码(演示占位)", icon="🔒")
 
     # 管理员快捷登录(on_click 回调填充,规避"widget 已实例化"限制)
