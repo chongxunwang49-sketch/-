@@ -13,6 +13,7 @@ LangGraph 多智能体编排(步骤10+步骤11)
 编译入口:build_workflow()
 执行入口:run_analysis(stock_code)
 """
+import concurrent.futures
 import logging
 import sys
 from pathlib import Path
@@ -23,15 +24,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))  # 项目
 import pandas as pd  # noqa: E402
 from langgraph.graph import END, START, StateGraph  # noqa: E402
 
+from ..agents.event import run_event_agent  # noqa: E402
+from ..agents.flow import run_flow_agent  # noqa: E402
+from ..agents.fundamental import run_fundamental_agent  # noqa: E402
+from ..agents.industry import run_industry_agent  # noqa: E402
 from ..agents.llm import LLMClient  # noqa: E402
 from ..agents.report import run_report_agent  # noqa: E402
 from ..agents.risk import run_risk_agent, _rule_based_fallback  # noqa: E402
 from ..agents.sentiment import run_sentiment_agent  # noqa: E402
 from ..agents.technical import compute_indicators, run_technical_agent  # noqa: E402
+from ..agents.valuation import run_valuation_agent  # noqa: E402
 from ..models import StockPrice  # noqa: E402
 from ..models import engine  # noqa: E402
-from ..schemas import AnalysisReport, NewsItem, RiskAssessment, SentimentResult, TechnicalIndicators  # noqa: E402
+from ..schemas import (  # noqa: E402
+    AnalysisReport,
+    EventResult,
+    FundamentalResult,
+    FundFlowResult,
+    IndustryResult,
+    NewsItem,
+    RiskAssessment,
+    SentimentResult,
+    TechnicalIndicators,
+    ValuationResult,
+)
 from sqlalchemy import select  # noqa: E402
+
+# 单个 Agent 超时熔断阈值(第四批):超过 30 秒未返回则跳过该 Agent 并记录
+NODE_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +80,15 @@ class WorkflowState(TypedDict):
     technical_analysis: Optional[str]
     sentiment: Optional[SentimentResult]
     sentiment_failed: bool
+    fundamental: Optional[FundamentalResult]   # 第四批:基本面
+    valuation: Optional[ValuationResult]       # 第四批:估值
+    flow: Optional[FundFlowResult]             # 第四批:资金流向
+    industry: Optional[IndustryResult]         # 第四批:行业
+    event: Optional[EventResult]               # 第四批:事件驱动
     risk: Optional[RiskAssessment]
     report: Optional[AnalysisReport]
     data_source: str  # real/backup/mock,来自采集降级链
-    mode: str  # full=完整链路 / quick=跳过情感分析(专业看板升级,默认 full)
+    mode: str  # full=完整链路 / quick=仅技术→风险→报告(专业看板升级,默认 full)
 
 
 # ------------------------------------------------------------
@@ -162,6 +187,116 @@ def sentiment_node(state: WorkflowState) -> dict:
         }
 
 
+# ------------------------------------------------------------
+# 超时熔断(第四批):单个 Agent 超过 NODE_TIMEOUT_SECONDS 未返回则跳过并记录
+# ------------------------------------------------------------
+def timeout_guard(node_fn, default_builder):
+    """包装节点函数:线程内执行,超时返回 default_builder(state) 的降级结果。
+
+    说明:线程无法强杀,超时后后台线程继续跑但结果被丢弃(不阻塞主流程)。
+    """
+    def wrapped(state: WorkflowState) -> dict:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(node_fn, state)
+        try:
+            return future.result(timeout=NODE_TIMEOUT_SECONDS)
+        except concurrent.futures.TimeoutError:
+            logger.warning("[%s] 超时熔断(>%ds),跳过该 Agent",
+                           getattr(node_fn, "__name__", "node"), NODE_TIMEOUT_SECONDS)
+            default = default_builder(state)
+            default["timed_out"] = True  # 供 task_manager 在流水线标注
+            return default
+        finally:
+            executor.shutdown(wait=False)  # 不等待被熔断线程
+
+    wrapped.__name__ = getattr(node_fn, "__name__", "wrapped")
+    return wrapped
+
+
+# ------------------------------------------------------------
+# 第四批:基本面 / 估值 / 资金流向 / 行业 / 事件驱动 节点
+# ------------------------------------------------------------
+def fundamental_node(state: WorkflowState) -> dict:
+    """基本面分析:财务数据 -> 公司质地评分"""
+    code = state["stock_code"]
+    try:
+        return {"fundamental": run_fundamental_agent(code, _llm())}
+    except Exception as e:
+        logger.error("[fundamental] 降级: %s", e)
+        return {"fundamental": FundamentalResult(stock_code=code, score=0.5,
+                                                 summary="基本面分析暂不可用")}
+
+
+def _default_fundamental(state: WorkflowState) -> dict:
+    return {"fundamental": FundamentalResult(stock_code=state["stock_code"], score=0.5,
+                                             summary="基本面分析超时/不可用")}
+
+
+def valuation_node(state: WorkflowState) -> dict:
+    """估值分析:PE/PB -> 估值吸引力(依赖基本面节点完成后运行)"""
+    code = state["stock_code"]
+    try:
+        return {"valuation": run_valuation_agent(code, _llm())}
+    except Exception as e:
+        logger.error("[valuation] 降级: %s", e)
+        return {"valuation": ValuationResult(stock_code=code, score=0.5,
+                                             summary="估值分析暂不可用")}
+
+
+def _default_valuation(state: WorkflowState) -> dict:
+    return {"valuation": ValuationResult(stock_code=state["stock_code"], score=0.5,
+                                         summary="估值分析超时/不可用")}
+
+
+def flow_node(state: WorkflowState) -> dict:
+    """资金流向:主力资金净流入 -> 资金情绪"""
+    code = state["stock_code"]
+    try:
+        return {"flow": run_flow_agent(code, _llm())}
+    except Exception as e:
+        logger.error("[flow] 降级: %s", e)
+        return {"flow": FundFlowResult(stock_code=code, score=0.5,
+                                       summary="资金流向暂不可用")}
+
+
+def _default_flow(state: WorkflowState) -> dict:
+    return {"flow": FundFlowResult(stock_code=state["stock_code"], score=0.5,
+                                   summary="资金流向超时/不可用")}
+
+
+def industry_node(state: WorkflowState) -> dict:
+    """行业分析:行业映射 + LLM 景气度判断"""
+    code = state["stock_code"]
+    try:
+        return {"industry": run_industry_agent(code, _llm())}
+    except Exception as e:
+        logger.error("[industry] 降级: %s", e)
+        return {"industry": IndustryResult(stock_code=code, score=0.5,
+                                           summary="行业分析暂不可用")}
+
+
+def _default_industry(state: WorkflowState) -> dict:
+    return {"industry": IndustryResult(stock_code=state["stock_code"], score=0.5,
+                                       summary="行业分析超时/不可用")}
+
+
+def event_node(state: WorkflowState) -> dict:
+    """事件驱动:新闻/公告 -> 事件影响方向"""
+    code = state["stock_code"]
+    items = state.get("news_items") or []
+    try:
+        return {"event": run_event_agent(items, _llm(), code)}
+    except Exception as e:
+        logger.error("[event] 降级: %s", e)
+        return {"event": EventResult(stock_code=code, score=0.5,
+                                     events=[], summary="事件分析暂不可用")}
+
+
+def _default_event(state: WorkflowState) -> dict:
+    return {"event": EventResult(stock_code=state["stock_code"], score=0.5,
+                                 events=[], summary="事件分析超时/不可用")}
+
+
 def risk_node(state: WorkflowState) -> dict:
     """风险评估:情感+技术 -> 风险;情感失败时走纯技术规则兜底"""
     code = state["stock_code"]
@@ -198,6 +333,8 @@ def report_node(state: WorkflowState) -> dict:
         report = run_report_agent(
             state.get("sentiment"), state.get("technical_analysis"), state.get("risk"),
             _llm(), code, state.get("data_source", "real"), rag_sources,
+            fundamental=state.get("fundamental"), valuation=state.get("valuation"),
+            flow=state.get("flow"), industry=state.get("industry"), event=state.get("event"),
         )
         return {"report": report}
     except Exception as e:
@@ -214,33 +351,69 @@ def report_node(state: WorkflowState) -> dict:
 # ------------------------------------------------------------
 # 条件路由:新闻为空时跳过情感分析(步骤10 的 Conditional Edge)
 # ------------------------------------------------------------
-def _route_after_collect(state: WorkflowState) -> str:
-    """条件路由:quick 模式或新闻为空时跳过情感分析,直接进 risk"""
+def _route_after_collect(state: WorkflowState) -> list:
+    """条件 fan-out(第四批):
+    - quick 模式:仅 technical(快速路径:采集→技术→风险→报告)
+    - full 模式:technical + fundamental + flow + industry + event 并行,
+      新闻非空时再加 sentiment(无新闻则跳过情感分析,沿用原降级)
+    """
     if state.get("mode") == "quick":
-        return "risk"
-    return "sentiment" if state.get("news_items") else "risk"
+        return ["technical"]
+    targets = ["technical", "fundamental", "flow", "industry", "event"]
+    if state.get("news_items"):
+        targets.append("sentiment")
+    return targets
 
 
 # ------------------------------------------------------------
 # 构图与执行
 # ------------------------------------------------------------
 def build_workflow():
-    """构建并编译 LangGraph 状态图"""
+    """构建并编译 LangGraph 状态图(第四批:并行组扩大 + 超时熔断 + 条件依赖)
+
+    collect
+      ├─▶ technical ──────────────┐
+      ├─▶ sentiment(新闻非空时) ───┼─▶ risk ─▶ report ─▶ END
+      ├─▶ fundamental ─▶ valuation┘
+      ├─▶ flow ───────────────────┘
+      ├─▶ industry ───────────────┘
+      └─▶ event ──────────────────┘
+    quick 模式只走 technical → risk → report
+    """
     g = StateGraph(WorkflowState)
 
+    # 数据采集不设超时(它承载三级降级采集,是整条链路的数据地基)
     g.add_node("collect", collect_node)
-    g.add_node("technical", technical_node)
-    g.add_node("sentiment", sentiment_node)
-    g.add_node("risk", risk_node)
-    g.add_node("report", report_node)
+    # 分析类节点统一接入超时熔断(>30s 跳过并记录)
+    g.add_node("technical", timeout_guard(technical_node, lambda s: {"technical_analysis": "技术分析超时"}))
+    g.add_node("sentiment", timeout_guard(sentiment_node, lambda s: {
+        "sentiment": SentimentResult(stock_code=s["stock_code"], score=0.5,
+                                     reason="情感分析超时", source="timeout"),
+        "sentiment_failed": True}))
+    g.add_node("fundamental", timeout_guard(fundamental_node, _default_fundamental))
+    g.add_node("valuation", timeout_guard(valuation_node, _default_valuation))
+    g.add_node("flow", timeout_guard(flow_node, _default_flow))
+    g.add_node("industry", timeout_guard(industry_node, _default_industry))
+    g.add_node("event", timeout_guard(event_node, _default_event))
+    g.add_node("risk", timeout_guard(risk_node, lambda s: {
+        "risk": _rule_based_fallback(s.get("sentiment"), s.get("technical_analysis"), s["stock_code"]),
+        "risk_timeout": True}))
+    g.add_node("report", timeout_guard(report_node, lambda s: {"report": AnalysisReport(
+        stock_code=s["stock_code"], company_name=s["stock_code"],
+        report="## 综合结论\n报告生成环节超时,请稍后重试。",
+        data_source=s.get("data_source", "real"))}))
 
     g.add_edge(START, "collect")
-    # technical 与 sentiment 并行(fan-out 后汇聚到 risk)
-    g.add_edge("collect", "technical")
+    # 并行 fan-out(quick 模式只出 technical)
     g.add_conditional_edges("collect", _route_after_collect,
-                            {"sentiment": "sentiment", "risk": "risk"})
-    g.add_edge("technical", "risk")
-    g.add_edge("sentiment", "risk")
+                            {"technical": "technical", "sentiment": "sentiment",
+                             "fundamental": "fundamental", "flow": "flow",
+                             "industry": "industry", "event": "event"})
+    # 条件依赖:估值分析依赖基本面
+    g.add_edge("fundamental", "valuation")
+    # fan-in 汇聚到 risk
+    for node in ("technical", "sentiment", "valuation", "flow", "industry", "event"):
+        g.add_edge(node, "risk")
     g.add_edge("risk", "report")
     g.add_edge("report", END)
 
@@ -261,6 +434,11 @@ def run_analysis(stock_code: str, mode: str = "full") -> AnalysisReport:
         "technical_analysis": None,
         "sentiment": None,
         "sentiment_failed": False,
+        "fundamental": None,
+        "valuation": None,
+        "flow": None,
+        "industry": None,
+        "event": None,
         "risk": None,
         "report": None,
         "data_source": "real",

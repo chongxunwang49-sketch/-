@@ -109,6 +109,93 @@ class RiskAssessment(BaseModel):
         return v if v in {"低", "中", "高"} else "中"
 
 
+def _clamp_score(v: float) -> float:
+    """把 0-1 得分钳制到合法区间(防 LLM 输出越界脏数据)"""
+    if v < 0:
+        return 0.0
+    if v > 1:
+        return 1.0
+    return v
+
+
+class FundamentalResult(BaseModel):
+    """基本面分析结果(第四批)"""
+
+    stock_code: str = Field(description="股票代码")
+    score: float = Field(description="公司质地得分 0-1")
+    revenue_growth: Optional[float] = Field(default=None, description="营收同比增速(%)")
+    roe: Optional[float] = Field(default=None, description="净资产收益率 ROE(%)")
+    profit_margin: Optional[float] = Field(default=None, description="净利率(%)")
+    summary: str = Field(default="", description="一句话结论")
+    data_source: str = Field(default="none", description="real/backup/mock/none")
+
+    @field_validator("score")
+    @classmethod
+    def _check_score(cls, v: float) -> float:
+        return _clamp_score(v)
+
+
+class ValuationResult(BaseModel):
+    """估值分析结果(第四批)"""
+
+    stock_code: str = Field(description="股票代码")
+    score: float = Field(description="估值吸引力得分 0-1(高=低估)")
+    pe: Optional[float] = Field(default=None, description="市盈率 PE")
+    pb: Optional[float] = Field(default=None, description="市净率 PB")
+    pe_percentile: Optional[float] = Field(default=None, description="PE 历史分位 0-1")
+    summary: str = Field(default="", description="一句话结论")
+    data_source: str = Field(default="none", description="real/backup/mock/none")
+
+    @field_validator("score")
+    @classmethod
+    def _check_score(cls, v: float) -> float:
+        return _clamp_score(v)
+
+
+class FundFlowResult(BaseModel):
+    """资金流向结果(第四批)"""
+
+    stock_code: str = Field(description="股票代码")
+    score: float = Field(description="资金情绪得分 0-1")
+    main_net: Optional[float] = Field(default=None, description="主力资金净流入(万元)")
+    summary: str = Field(default="", description="一句话结论")
+    data_source: str = Field(default="none", description="real/backup/mock/none")
+
+    @field_validator("score")
+    @classmethod
+    def _check_score(cls, v: float) -> float:
+        return _clamp_score(v)
+
+
+class IndustryResult(BaseModel):
+    """行业分析结果(第四批)"""
+
+    stock_code: str = Field(description="股票代码")
+    score: float = Field(description="行业景气得分 0-1")
+    industry: str = Field(default="", description="所属行业")
+    peers: List[str] = Field(default_factory=list, description="对标公司")
+    summary: str = Field(default="", description="一句话结论")
+
+    @field_validator("score")
+    @classmethod
+    def _check_score(cls, v: float) -> float:
+        return _clamp_score(v)
+
+
+class EventResult(BaseModel):
+    """事件驱动分析结果(第四批)"""
+
+    stock_code: str = Field(description="股票代码")
+    score: float = Field(description="事件影响得分 0-1(0 极负 / 1 极正)")
+    events: List[str] = Field(default_factory=list, description="识别出的重大事件")
+    summary: str = Field(default="", description="一句话结论")
+
+    @field_validator("score")
+    @classmethod
+    def _check_score(cls, v: float) -> float:
+        return _clamp_score(v)
+
+
 class AnalysisReport(BaseModel):
     """完整分析报告(报告生成 Agent 的输出 / 整个工作流的最终产物)"""
 
@@ -117,6 +204,11 @@ class AnalysisReport(BaseModel):
     sentiment: Optional[SentimentResult] = Field(default=None, description="情感分析结果")
     technical_analysis: Optional[str] = Field(default=None, description="技术面解读文本")
     risk: Optional[RiskAssessment] = Field(default=None, description="风险评估结果")
+    fundamental: Optional[FundamentalResult] = Field(default=None, description="基本面分析结果(第四批)")
+    valuation: Optional[ValuationResult] = Field(default=None, description="估值分析结果(第四批)")
+    flow: Optional[FundFlowResult] = Field(default=None, description="资金流向结果(第四批)")
+    industry: Optional[IndustryResult] = Field(default=None, description="行业分析结果(第四批)")
+    event: Optional[EventResult] = Field(default=None, description="事件驱动结果(第四批)")
     report: str = Field(default="", description="最终报告(Markdown)")
     data_source: str = Field(default="real", description="行情数据来源标记:real/backup/mock")
     rag_sources: List[str] = Field(default_factory=list, description="报告引用的知识库片段(溯源/防幻觉)")

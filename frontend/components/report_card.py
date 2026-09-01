@@ -239,7 +239,76 @@ def render_report_tab(result: dict | None, pal: dict):
 
 
 # ------------------------------------------------------------
-# Tab 2: 情感分析详情
+# Tab 2: 基本面与估值(第四批:基本面/估值/资金流向/行业/事件)
+# ------------------------------------------------------------
+def render_fundamental_tab(result: dict | None, pal: dict):
+    if not result:
+        st.info("尚无分析结果。")
+        return
+
+    def _dim_card(label: str, score, sub: str, note: str, src: str = "") -> None:
+        score_v = score if score is not None else 0.5
+        color = "tc-up" if score_v >= 0.6 else ("tc-warn" if score_v >= 0.4 else "tc-down")
+        src_tag = {"real": "· 实时", "backup": "· 备用", "mock": "· 模拟", "none": "· 暂无数据"}.get(src, "")
+        st.markdown(f"""
+        <div class="tc-card">
+          <div class="tc-label">{label}{src_tag}</div>
+          <div style="display:flex;align-items:baseline;gap:10px;">
+            <span class="tc-value {color}">{score_v:.2f}</span>
+            <span class="tc-sub">{sub}</span>
+          </div>
+          <div class="tc-sub">{note}</div>
+        </div>""", unsafe_allow_html=True)
+
+    fund = result.get("fundamental")
+    if fund:
+        metrics = []
+        if fund.get("revenue_growth") is not None:
+            metrics.append(f"营收增速 {fund['revenue_growth']}%")
+        if fund.get("roe") is not None:
+            metrics.append(f"ROE {fund['roe']}%")
+        if fund.get("profit_margin") is not None:
+            metrics.append(f"净利率 {fund['profit_margin']}%")
+        _dim_card("🏛 基本面 · 质地", fund.get("score"),
+                  "公司质地" + (" · ".join(metrics) if metrics else " · 财务指标暂缺"),
+                  fund.get("summary", ""), fund.get("data_source", ""))
+
+    val = result.get("valuation")
+    if val:
+        sub = ""
+        if val.get("pe") is not None:
+            sub += f"PE {val['pe']} · PB {val.get('pb')}"
+        if val.get("pe_percentile") is not None:
+            sub += f" · PE分位 {val['pe_percentile']:.0%}"
+        _dim_card("💰 估值 · 吸引力", val.get("score"), sub or "估值指标暂缺",
+                  val.get("summary", ""), val.get("data_source", ""))
+
+    fl = result.get("flow")
+    if fl:
+        sub = f"主力净流入 {fl['main_net']:,.0f} 万元" if fl.get("main_net") is not None else "资金数据暂缺"
+        _dim_card("💸 资金流向", fl.get("score"), sub,
+                  fl.get("summary", ""), fl.get("data_source", ""))
+
+    ind = result.get("industry")
+    if ind:
+        _dim_card("🏭 行业 · 景气", ind.get("score"),
+                  ind.get("industry", "未知") + (" · 对标:" + "/".join(ind.get("peers") or []) if ind.get("peers") else ""),
+                  ind.get("summary", ""))
+
+    ev = result.get("event")
+    if ev:
+        events = ev.get("events") or []
+        note = ev.get("summary", "")
+        if events:
+            note += " ｜ 事件:" + "; ".join(events)
+        _dim_card("📰 事件驱动", ev.get("score"), "重大事件方向", note)
+
+    if not any(result.get(k) for k in ("fundamental", "valuation", "flow", "industry", "event")):
+        st.info("本轮未产出基本面/估值/资金/行业/事件分析(快速模式跳过或数据缺失)。")
+
+
+# ------------------------------------------------------------
+# Tab 3: 情感分析详情
 # ------------------------------------------------------------
 def render_sentiment_tab(result: dict | None, pal: dict):
     if not result:

@@ -78,8 +78,9 @@ def render(pal: dict):
     # ---- 底部:多标签页 ----
     st.markdown("---")
     result = st.session_state.analysis_result
-    tab_report, tab_senti, tab_risk, tab_rag, tab_logs = st.tabs(
-        ["📝 投资报告", "💬 情感分析详情", "⚠️ 风险评估细项", "📚 数据溯源(RAG)", "🧾 系统日志 / Token"])
+    tab_report, tab_fund, tab_senti, tab_risk, tab_rag, tab_logs = st.tabs(
+        ["📝 投资报告", "💰 基本面与估值", "💬 情感分析详情", "⚠️ 风险评估细项",
+         "📚 数据溯源(RAG)", "🧾 系统日志 / Token"])
 
     with tab_report:
         rc.render_report_tab(result, pal)
@@ -88,6 +89,9 @@ def render(pal: dict):
             st.download_button("⬇️ 导出报告(HTML · 浏览器打印为 PDF)", data=html_report,
                                file_name=f"分析报告_{code}.html", mime="text/html")
             st.caption("下载后在浏览器打开,按 Ctrl+P 另存为 PDF 即可。")
+
+    with tab_fund:
+        rc.render_fundamental_tab(result, pal)
 
     with tab_senti:
         rc.render_sentiment_tab(result, pal)

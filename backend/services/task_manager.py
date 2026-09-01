@@ -25,22 +25,35 @@ from ..graph.workflow import build_workflow
 logger = logging.getLogger(__name__)
 
 # 流水线 DAG:与 graph/workflow.py 的拓扑一致,仅用于前端进度可视化
-# quick 模式去掉 sentiment 依赖(risk 只等 technical)
-NODE_ORDER = ["collect", "technical", "sentiment", "risk", "report"]
+# quick 模式只走 collect → technical → risk → report
+NODE_ORDER = ["collect", "technical", "sentiment", "fundamental", "valuation",
+              "flow", "industry", "event", "risk", "report"]
 PREDECESSORS = {
     "collect": [],
     "technical": ["collect"],
     "sentiment": ["collect"],
-    "risk": ["technical", "sentiment"],  # fan-in:两个前置都完成才开始
+    "fundamental": ["collect"],
+    "valuation": ["fundamental"],          # 估值依赖基本面(条件依赖)
+    "flow": ["collect"],
+    "industry": ["collect"],
+    "event": ["collect"],
+    "risk": ["technical", "sentiment", "valuation", "flow", "industry", "event"],  # fan-in
     "report": ["risk"],
 }
 NODE_LABELS = {
     "collect": "数据采集",
     "technical": "技术分析",
     "sentiment": "情感分析",
+    "fundamental": "基本面分析",
+    "valuation": "估值分析",
+    "flow": "资金流向",
+    "industry": "行业分析",
+    "event": "事件驱动",
     "risk": "风险评估",
     "report": "报告生成",
 }
+# quick 模式实际会运行的节点(其余一律跳过)
+QUICK_NODES = {"collect", "technical", "risk", "report"}
 
 # 工作流级一次编译,进程内复用
 _GRAPH = build_workflow()
@@ -140,10 +153,10 @@ class TaskManager:
         for succ, deps in PREDECESSORS.items():
             if succ in done:  # 已完成的不再改动
                 continue
-            if task.mode == "quick" and succ == "sentiment":
-                continue  # 快速模式情感阶段直接跳过(末尾统一标记 skipped)
+            if task.mode == "quick" and succ not in QUICK_NODES:
+                continue  # 快速模式:情感/基本面/估值/资金/行业/事件 一律跳过(末尾标记 skipped)
             # 实际依赖(quick 模式下 risk 只依赖 technical)
-            deps_eff = [d for d in deps if not (task.mode == "quick" and d == "sentiment")]
+            deps_eff = [d for d in deps if d in QUICK_NODES] if task.mode == "quick" else deps
             if node in deps_eff:
                 if all(d in done for d in deps_eff):
                     self._update_stage(task, succ, "running")
@@ -162,6 +175,11 @@ class TaskManager:
                 "technical_analysis": None,
                 "sentiment": None,
                 "sentiment_failed": False,
+                "fundamental": None,
+                "valuation": None,
+                "flow": None,
+                "industry": None,
+                "event": None,
                 "risk": None,
                 "report": None,
                 "data_source": "real",
@@ -177,7 +195,9 @@ class TaskManager:
                 elapsed = now - prev_finish  # 上一个节点完成到本节点完成的窗口 ≈ 本节点活跃时间
                 prev_finish = now
                 done[node] = update
-                self._update_stage(task, node, "completed", elapsed)
+                # 超时熔断标注
+                note = "⏱ 超时熔断" if update.get("timed_out") else None
+                self._update_stage(task, node, "completed", elapsed, note)
                 self._mark_successors_running(task, node, done)
 
             # 没出事件的节点 = 被条件路由跳过(如新闻为空跳情感、quick 模式跳情感)
@@ -217,6 +237,11 @@ class TaskManager:
         news = (done.get("sentiment") or {}).get("news_items") or collect.get("news_items") or []
         sentiment_update = done.get("sentiment") or {}
         sentiment = sentiment_update.get("sentiment")
+        fundamental = (done.get("fundamental") or {}).get("fundamental")
+        valuation = (done.get("valuation") or {}).get("valuation")
+        flow = (done.get("flow") or {}).get("flow")
+        industry = (done.get("industry") or {}).get("industry")
+        event = (done.get("event") or {}).get("event")
         risk = (done.get("risk") or {}).get("risk")
         report = (done.get("report") or {}).get("report")
 
@@ -242,6 +267,11 @@ class TaskManager:
             "technical_analysis": (done.get("technical") or {}).get("technical_analysis"),
             "sentiment": sentiment.model_dump(mode="json") if sentiment else None,
             "sentiment_failed": bool(sentiment_update.get("sentiment_failed", False)),
+            "fundamental": fundamental.model_dump(mode="json") if fundamental else None,
+            "valuation": valuation.model_dump(mode="json") if valuation else None,
+            "flow": flow.model_dump(mode="json") if flow else None,
+            "industry": industry.model_dump(mode="json") if industry else None,
+            "event": event.model_dump(mode="json") if event else None,
             "risk": risk.model_dump(mode="json") if risk else None,
             "news_items": news_items,
             "data_source": task.data_source,

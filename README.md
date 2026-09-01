@@ -62,7 +62,8 @@
 
 **异步工作流**:`POST /analyze` 立即返回 `task_id` → 后端 `TaskManager` 后台线程跑 LangGraph,消费 `graph.stream()` 事件流映射各 Agent 进度 → 前端每 ~1s 轮询 `/task/status`,完成后取 `/task/result`。
 **用户体系**:bcrypt 密码散列 + JWT(HS256) 认证;首次启动自动创建管理员 `admin/admin123`(可用 `ADMIN_USERNAME/ADMIN_PASSWORD` 覆盖);`/analyze` 需登录,完成后写入该用户 `analysis_history`。
-**分析模式**:`full` = 完整链路(采集→技术∥情感→风险→报告+RAG);`quick` = 跳过情感分析(更快)。
+**分析模式**:`full` = 完整链路(采集 → 技术∥情感∥基本面→估值∥资金∥行业∥事件 → 风险 → 报告+RAG,9 个 Agent 并行);`quick` = 仅技术→风险→报告(最快)。
+**超时熔断**:单个分析 Agent 超过 30 秒未返回自动跳过并标记(第四批),保证整体不卡死。
 
 ---
 
@@ -81,6 +82,11 @@ stock-agent-system/
 │   │   ├── prompts.py     #   各 Agent System Prompt
 │   │   ├── sentiment.py   #   情感分析 Agent
 │   │   ├── technical.py   #   技术分析 Agent(指标计算+解读)
+│   │   ├── fundamental.py #   基本面分析 Agent(第四批)
+│   │   ├── valuation.py   #   估值分析 Agent(PE/PB/分位,第四批)
+│   │   ├── flow.py        #   资金流向 Agent(第四批)
+│   │   ├── industry.py    #   行业分析 Agent(第四批)
+│   │   ├── event.py       #   事件驱动 Agent(第四批)
 │   │   ├── risk.py        #   风险评估 Agent(含规则兜底)
 │   │   └── report.py      #   报告生成 Agent
 │   ├── services/
