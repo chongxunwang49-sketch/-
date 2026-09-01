@@ -254,6 +254,10 @@ def apply_theme(theme_name: str) -> dict:
     .stApp {{ background-color: {pal['bg']}; --ease-spring: {ELASTIC}; }}
     [data-testid="stSidebar"] {{ background-color: {pal['card']}; border-right: 1px solid {border}; }}
     [data-testid="stHeader"] {{ background: transparent; }}
+    /* 隐藏 streamlit 原生英文工具栏(右上角 Deploy / ⋮ 菜单 / Running 条),
+       其功能由中文顶部状态栏接管;原生 chrome 无法翻译成中文 */
+    [data-testid="stToolbar"] {{ display: none !important; }}
+    [data-testid="stDecoration"] {{ display: none !important; }}
 
     /* 滚动条 */
     ::-webkit-scrollbar {{ width: 8px; height: 8px; }}

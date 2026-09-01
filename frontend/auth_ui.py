@@ -50,8 +50,11 @@ def _auth_css(pal: dict) -> str:
     }}
     @keyframes auth-twinkle {{ 0%,100% {{ opacity: .12 }} 50% {{ opacity: .9 }} }}
     /* 右侧登录卡:玻璃态(毛玻璃 + 霓虹描边)。
-       用 > 直取第二列的 vertical block,避免误匹配卡内嵌套列导致穿模 */
-    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) > [data-testid="stVerticalBlock"] {{
+       :has(> stHorizontalBlock) 精确锁定"最外层卡片列"——卡内 c1/c2 行里
+       "忘记密码"也是第 2 列,普通 nth-child 会把卡片样式误套到它身上,
+       造成"双框/不对称"(旧 bug 根因) */
+    [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]:nth-child(2) >
+    [data-testid="stVerticalBlock"]:has(> [data-testid="stHorizontalBlock"]) {{
         background: rgba(15, 21, 34, .72);
         border: 1px solid rgba(79, 140, 255, .28);
         border-radius: 18px;

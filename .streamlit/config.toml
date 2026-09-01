@@ -9,3 +9,7 @@ textColor = "#e8edf6"
 
 [server]
 headless = true
+
+# 工具栏最小化:隐藏右上角 "Deploy" 云部署按钮(英文原生 chrome,无法翻译)
+[client]
+toolbarMode = "minimal"
