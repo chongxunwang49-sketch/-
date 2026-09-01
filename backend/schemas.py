@@ -115,3 +115,4 @@ class AnalysisReport(BaseModel):
     risk: Optional[RiskAssessment] = Field(default=None, description="风险评估结果")
     report: str = Field(default="", description="最终报告(Markdown)")
     data_source: str = Field(default="real", description="行情数据来源标记:real/backup/mock")
+    rag_sources: List[str] = Field(default_factory=list, description="报告引用的知识库片段(溯源/防幻觉)")

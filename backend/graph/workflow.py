@@ -174,12 +174,25 @@ def risk_node(state: WorkflowState) -> dict:
 
 
 def report_node(state: WorkflowState) -> dict:
-    """报告生成:汇总所有环节 -> 最终 Markdown 报告"""
+    """报告生成:汇总所有环节 -> 最终 Markdown 报告(含 RAG 知识库引用,防幻觉)"""
     code = state["stock_code"]
+
+    # RAG 检索:从知识库捞该股票相关的财报片段,供报告引用;检索失败则跳过(不阻断)
+    rag_sources: list = []
+    try:
+        from ..services.vector_store import retrieve as rag_retrieve
+        from ..agents.report import COMPANY_NAMES
+        query = f"{COMPANY_NAMES.get(code, code)} {code} 财务数据 营收 净利润"
+        result = rag_retrieve(query, top_k=3)
+        rag_sources = result.get("documents", [[]])[0]
+        logger.info("[report] RAG 命中 %d 条知识库片段", len(rag_sources))
+    except Exception as e:
+        logger.warning("[report] RAG 检索不可用,报告不带知识库引用: %s", e)
+
     try:
         report = run_report_agent(
             state.get("sentiment"), state.get("technical_analysis"), state.get("risk"),
-            _llm(), code, state.get("data_source", "real"),
+            _llm(), code, state.get("data_source", "real"), rag_sources,
         )
         return {"report": report}
     except Exception as e:
@@ -188,6 +201,7 @@ def report_node(state: WorkflowState) -> dict:
             stock_code=code, company_name=code,
             report="## 综合结论\n报告生成环节暂不可用,请稍后重试。",
             data_source=state.get("data_source", "real"),
+            rag_sources=rag_sources,
         )
         return {"report": report}
 

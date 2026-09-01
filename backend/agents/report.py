@@ -19,8 +19,10 @@ def run_report_agent(sentiment: Optional[SentimentResult],
                      risk: Optional[RiskAssessment],
                      client: LLMClient,
                      stock_code: str = "600519",
-                     data_source: str = "real") -> AnalysisReport:
-    """生成最终报告。company_name 默认按代码映射,未知代码用代码本身。"""
+                     data_source: str = "real",
+                     rag_sources: Optional[list] = None) -> AnalysisReport:
+    """生成最终报告。company_name 默认按代码映射,未知代码用代码本身。
+    rag_sources: RAG 检索到的知识库片段,供报告引用(防幻觉、可溯源)。"""
     company = COMPANY_NAMES.get(stock_code, stock_code)
     # 注意:用 list + join 拼接,避免"+"与 if/else 表达式优先级混淆导致拼接被截断
     parts = []
@@ -29,6 +31,12 @@ def run_report_agent(sentiment: Optional[SentimentResult],
     parts.append(f"风险等级：{risk.risk_level if risk else '未知'}")
     parts.append(f"风险点：{('、'.join(risk.risks)) if risk else '无'}")
     parts.append(f"公司名称：{company}")
+    # RAG 知识库内容:拼入 Prompt 并要求引用(若检索到)
+    if rag_sources:
+        parts.append("以下是检索到的知识库内容(来自公司财报),写报告时可参考,数据须与输入一致:")
+        for i, src in enumerate(rag_sources, 1):
+            parts.append(f"[知识库{i}] {src}")
+        parts.append("要求:引用知识库数据时在对应处标注『来源:知识库』;知识库内容与输入冲突时以输入数据为准。")
     user_prompt = "\n".join(parts)
 
     if client.provider == "dify":
@@ -51,6 +59,7 @@ def run_report_agent(sentiment: Optional[SentimentResult],
         risk=risk,
         report=report,
         data_source=data_source,
+        rag_sources=rag_sources or [],
     )
     logger.info("报告生成完成: %d 字符", len(report))
     return result
