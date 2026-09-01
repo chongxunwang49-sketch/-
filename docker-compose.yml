@@ -1,0 +1,57 @@
+# 多智能体股票分析系统 - 一键编排(步骤15)
+# 三个服务: backend(本项目后端) + postgres(数据存储) + chroma(向量库)
+# 启动: docker compose up -d --build
+# 访问: http://localhost:8000/health
+#
+# 说明:
+# - LLM/Embedding 走宿主机 Ollama,容器通过 host.docker.internal 访问
+# - .env 不随镜像打包;容器用 environment 覆盖关键配置
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: stock-agent-pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: stock_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  chroma:
+    image: chromadb/chroma:latest
+    container_name: stock-agent-chroma
+    ports:
+      - "8001:8000"   # 宿主 8001 -> 容器 8000(chroma 默认端口)
+    volumes:
+      - chromadata:/chroma/chroma
+
+  backend:
+    build: .
+    container_name: stock-agent-backend
+    ports:
+      - "8000:8000"
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: stock_agent
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      EMBED_PROVIDER: ollama
+    depends_on:
+      postgres:
+        condition: service_healthy
+      chroma:
+        condition: service_started
+
+volumes:
+  pgdata:
+  chromadata:
