@@ -15,7 +15,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: stock_agent
     ports:
-      - "5432:5432"
+      - "5433:5432"   # 5433 对外,避免与本机手动容器 5432 冲突(compose 内部用服务名 postgres)
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:

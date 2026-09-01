@@ -18,4 +18,5 @@ ENV PYTHONPATH=/app
 EXPOSE 8000
 
 # 启动 FastAPI 后端(LLM 走宿主机的 Ollama,见 docker-compose 的 OLLAMA_BASE_URL)
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# 先自动建表(幂等),再启动服务 —— 保证 postgres 空库也能一键可用
+CMD ["sh", "-c", "python -c 'from backend.models import create_tables; create_tables()' && uvicorn backend.main:app --host 0.0.0.0 --port 8000"]
